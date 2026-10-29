@@ -2962,7 +2962,6 @@ class GUIContext(object):
             controller = ctx.GetBlockingController()
             if controller is None:
                 return {"error": "replay_unavailable", "message": "Replay controller not available"}
-            import renderdoc as rd
             counters = controller.EnumerateCounters()
             result_list = []
             for c in counters:
@@ -3946,7 +3945,7 @@ class GUIContext(object):
         sub.slice = array_slice
         sub.sample = sample
 
-        null_id = str(rd.ResourceId.Null())
+        _ = str(rd.ResourceId.Null())
 
         try:
             modifications = controller.PixelHistory([rid_obj], x, y, sub, rd.CompType.Typeless)
@@ -4197,7 +4196,6 @@ class GUIContext(object):
 
     def _inspect_debug_vertex(self, ctx, params):
         """Collect a vertex shader debug trace for a specific vertex invocation."""
-        import renderdoc as rd
 
         event_id_param = int(params.get("event_id", 0))
         vert_id = max(0, int(params.get("vert_id", 0)))
@@ -4254,7 +4252,6 @@ class GUIContext(object):
 
     def _inspect_debug_compute(self, ctx, params):
         """Collect a compute shader debug trace for a specific thread invocation."""
-        import renderdoc as rd
 
         event_id_param = int(params.get("event_id", 0))
         group_x = max(0, int(params.get("group_x", 0)))

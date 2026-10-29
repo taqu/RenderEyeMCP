@@ -17,7 +17,6 @@ import argparse
 import os
 import platform
 import shutil
-import sys
 import tempfile
 from pathlib import Path
 
@@ -274,9 +273,9 @@ def setup(install_dir: Path) -> None:
                 env_file,
                 "# RenderEyeMCP configuration\nRENDEREYE_RENDERDOC_EXE=\n",
             )
-        print(f"  Created .env")
+        print("  Created .env")
     else:
-        print(f"  Existing .env found — preserving user settings")
+        print("  Existing .env found — preserving user settings")
 
     # Auto-detect RenderDoc when the path is unset or invalid
     existing = _read_env_values(env_file)

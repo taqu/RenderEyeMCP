@@ -6,7 +6,6 @@ reusable across multiple analysis tool calls without repeating the GPU work.
 
 from __future__ import annotations
 
-import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional

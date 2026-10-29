@@ -11,8 +11,7 @@ import pytest
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-from classify_tag import classify, TagResult  # noqa: E402
-
+from classify_tag import classify  # noqa: E402
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Tag classification
@@ -104,7 +103,7 @@ class TestVersionPEP440:
 
     def _is_valid_pep440(self, version: str) -> bool:
         try:
-            from packaging.version import Version, InvalidVersion
+            from packaging.version import Version
 
             Version(version)
             return True

@@ -13,8 +13,8 @@ import time
 from typing import TYPE_CHECKING, List, Optional
 
 from rendereye_mcp import __version__
-from rendereye_mcp.service.measurement_store import MeasurementRecord, MeasurementStore
 from rendereye_mcp.service.debug_store import DebugRecord, DebugStore
+from rendereye_mcp.service.measurement_store import MeasurementRecord, MeasurementStore
 
 if TYPE_CHECKING:
     from rendereye_mcp.captures.registry import CaptureRegistry

@@ -29,7 +29,7 @@ INIT_PY = REPO_ROOT / "src" / "rendereye_mcp" / "__init__.py"
 def _validate_version(version: str) -> None:
     """Raise ValueError if version is not a plausible PEP 440 string."""
     try:
-        from packaging.version import Version, InvalidVersion
+        from packaging.version import Version
         Version(version)
     except ImportError:
         # packaging not available — accept any non-empty string

@@ -19,10 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
 
 # ---------------------------------------------------------------------------
 # renderdoc mock
@@ -187,7 +184,6 @@ class TestDebugStateToDict:
         with _patch_renderdoc():
             from rendereye_mcp._extension_data.gui_context import (
                 _debug_state_to_dict,
-                _shader_var_to_dict,
             )
 
             before_var = MagicMock()
@@ -607,7 +603,7 @@ class TestDebugVertex:
         ctx.GetBlockingController = MagicMock(return_value=controller)
 
         with _patch_renderdoc():
-            result = gc.inspect("debug_vertex", {"vert_id": 0})
+            _ = gc.inspect("debug_vertex", {"vert_id": 0})
 
         # FreeTrace should have been called despite the error
         controller.FreeTrace.assert_called_once()
@@ -776,7 +772,7 @@ class TestToolExecutorGetPixelHistory:
             return_value={"modifications": [], "total_modifications": 0}
         )
         te._conn_manager.get_active_connection_id = MagicMock(return_value="conn1")
-        result = _run(te._get_pixel_history(
+        _ = _run(te._get_pixel_history(
             resource_id="0x0001", x=100, y=200, instance_id="conn1"
         ))
         te._conn_manager.request_capture_inspection.assert_called_once()

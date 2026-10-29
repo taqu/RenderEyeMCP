@@ -13,7 +13,6 @@ Covers:
 
 from __future__ import annotations
 
-import math
 import struct
 import sys
 import threading
@@ -655,7 +654,7 @@ class TestMeshIndices:
     def test_respects_first_index_offset(self):
         gui, ctx = _make_gui(cur_event=1)
         # Pack indices 0,1,2,3 — first_index=2 means we start reading from index 2
-        raw = struct.pack("<HHHH", 0, 1, 2, 3)
+        _ = struct.pack("<HHHH", 0, 1, 2, 3)
         # GetBufferData will be called with offset= buf_off + first_index*stride
         # For simplicity, return only last 2 index bytes
         ibuf = _make_ibuf(resource_id_str="ResourceId::IB", byte_stride=2)
