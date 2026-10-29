@@ -1,0 +1,27 @@
+{
+    "permissions": {
+        "allow": [
+            "Read"
+        ]
+    },
+    "hooks": {
+        "synthetic": []
+    },
+    "projects": {
+        "D:\\Test": {
+            "trusted": true
+        }
+    },
+    "mcpServers": {
+        "other": {
+            "command": "other-server",
+            "env": {
+                "TEST": "not-a-secret"
+            },
+            "future": [
+                false,
+                1
+            ]
+        }
+    }
+}

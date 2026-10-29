@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "rendereye": {
+      "command": "C:\\Users\\<USERNAME>\\AppData\\Local\\RenderEyeMCP\\venv\\Scripts\\python.exe",
+      "args": ["-m", "rendereye_mcp"]
+    }
+  }
+}

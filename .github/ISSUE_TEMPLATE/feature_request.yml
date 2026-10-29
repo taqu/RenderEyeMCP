@@ -1,0 +1,19 @@
+name: Feature request / 機能要望
+description: Suggest an improvement. / 改善の提案。
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Debugging problem you want to solve / 解決したいデバッグ上の課題
+      description: Describe the rendering problem and what information the agent could not get.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed tool or behavior / 提案する機能
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Workarounds you use today / 現在の回避策

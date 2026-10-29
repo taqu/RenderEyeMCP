@@ -1,0 +1,249 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish GitHub Release (false = dry run)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      tag: ${{ steps.ver.outputs.tag }}
+      is_prerelease: ${{ steps.ver.outputs.is_prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - name: Install dependencies
+        run: uv sync
+      - name: Extract version
+        id: ver
+        shell: bash
+        run: |
+          VERSION=$(python -c "import sys; sys.path.insert(0,'src'); from rendereye_mcp import __version__; print(__version__)")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          if [[ "$VERSION" == *"-"* ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Package version: $VERSION"
+      - name: Validate version consistency
+        run: uv run python scripts/validate_release.py --check-versions
+      - name: Validate tag matches version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          uv run python scripts/validate_release.py --tag "$TAG"
+
+  test:
+    name: Test (${{ matrix.os }} / Python ${{ matrix.python-version }})
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: uv sync --dev
+      - name: Run tests
+        run: uv run pytest tests/ -v --tb=short
+      - name: Run lint
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        run: uv run ruff check src/ tests/
+
+  build:
+    name: Build Distributions
+    needs: [validate, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - name: Build wheel and sdist
+        run: uv build
+      - name: Check distributions with twine
+        shell: bash
+        run: uvx twine check dist/*.whl dist/*.tar.gz
+      - name: Assemble release package bundle
+        run: uv run python scripts/create_release_package.py
+      - name: Create release archives
+        shell: bash
+        run: uv run python scripts/build_release.py --create-archives --version ${{ needs.validate.outputs.version }}
+      - name: Generate checksums
+        shell: bash
+        run: |
+          uv run python scripts/generate_checksums.py \
+            --output dist/packages/SHA256SUMS.txt \
+            dist/*.whl \
+            dist/*.tar.gz \
+            dist/packages/RenderEyeMCP-v${{ needs.validate.outputs.version }}.zip \
+            dist/packages/RenderEyeMCP-Extension-v${{ needs.validate.outputs.version }}.zip
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts-${{ needs.validate.outputs.version }}
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/packages/RenderEyeMCP-v*.zip
+            dist/packages/RenderEyeMCP-Extension-v*.zip
+            dist/packages/SHA256SUMS.txt
+          retention-days: 30
+
+  verify:
+    name: Verify Release Artifacts
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts-${{ needs.validate.outputs.version }}
+          path: release-artifacts/
+      - name: Verify artifacts
+        run: |
+          uv run python scripts/validate_release.py \
+            --artifacts-dir release-artifacts/ \
+            --version ${{ needs.validate.outputs.version }}
+      - name: Install wheel in clean venv (no uv)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Verify pip installation
+        shell: bash
+        run: |
+          python -m venv release-verify-env
+          release-verify-env/bin/pip install --upgrade pip
+          release-verify-env/bin/pip install release-artifacts/*.whl
+          release-verify-env/bin/python -c "import rendereye_mcp; assert rendereye_mcp.__version__ == '${{ needs.validate.outputs.version }}', f'Version mismatch: {rendereye_mcp.__version__}'; print('Version OK:', rendereye_mcp.__version__)"
+          release-verify-env/bin/python -c "from rendereye_mcp.__main__ import main; print('Entry point: OK')"
+
+  release:
+    name: Publish GitHub Release
+    needs: [validate, test, build, verify]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish == true)
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts-${{ needs.validate.outputs.version }}
+          path: release-artifacts/
+      - name: Verify expected assets are present
+        shell: bash
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          MISSING=0
+          for f in \
+            "release-artifacts/rendereye_mcp-${VERSION}-py3-none-any.whl" \
+            "release-artifacts/rendereye_mcp-${VERSION}.tar.gz" \
+            "release-artifacts/RenderEyeMCP-v${VERSION}.zip" \
+            "release-artifacts/RenderEyeMCP-Extension-v${VERSION}.zip" \
+            "release-artifacts/SHA256SUMS.txt"; do
+            if [[ ! -f "$f" ]]; then
+              echo "MISSING: $f"
+              MISSING=1
+            else
+              echo "OK: $f"
+            fi
+          done
+          [[ $MISSING -eq 0 ]] || exit 1
+      - name: Check release does not already exist
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ needs.validate.outputs.tag }}"
+          if gh release view "$TAG" &>/dev/null; then
+            echo "ERROR: Release $TAG already exists. Delete it first or use a new tag."
+            exit 1
+          fi
+          echo "No existing release for $TAG — proceeding."
+      - name: Generate release notes
+        id: notes
+        shell: bash
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          TAG="${{ needs.validate.outputs.tag }}"
+          cat > release-notes.md <<EOF
+          ## RenderEyeMCP ${TAG}
+
+          MCP server bridging AI assistants to RenderDoc GPU frame debugger.
+
+          ### Installation
+
+          **Recommended:** Download \`RenderEyeMCP-v${VERSION}.zip\` and follow \`INSTALL-MANUAL.md\`.
+
+          ```bash
+          pip install rendereye_mcp-${VERSION}-py3-none-any.whl
+          ```
+
+          ### Artifacts
+
+          | File | Description |
+          |------|-------------|
+          | \`RenderEyeMCP-v${VERSION}.zip\` | Complete release bundle (wheel + extension + examples) |
+          | \`RenderEyeMCP-Extension-v${VERSION}.zip\` | RenderDoc extension only |
+          | \`rendereye_mcp-${VERSION}-py3-none-any.whl\` | Python wheel |
+          | \`rendereye_mcp-${VERSION}.tar.gz\` | Source distribution |
+          | \`SHA256SUMS.txt\` | Checksums for all artifacts |
+
+          ### Requirements
+
+          - Python 3.11 or later
+          - RenderDoc 1.x (Windows or Linux)
+          - No \`uv\` required for installation
+
+          ### Supported Platforms
+
+          - **Windows** — primary target, fully tested
+          - **Linux** — supported where RenderDoc is available
+
+          See the [installation guide](https://github.com/${{ github.repository }}/blob/main/docs/en/installation.md) ([日本語](https://github.com/${{ github.repository }}/blob/main/docs/ja/installation.md)) for full instructions.
+          EOF
+          echo "Generated release notes"
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          TAG="${{ needs.validate.outputs.tag }}"
+          PRERELEASE="${{ needs.validate.outputs.is_prerelease }}"
+          PRERELEASE_FLAG=""
+          [[ "$PRERELEASE" == "true" ]] && PRERELEASE_FLAG="--prerelease"
+          gh release create "$TAG" \
+            --title "RenderEyeMCP $TAG" \
+            --notes-file release-notes.md \
+            $PRERELEASE_FLAG \
+            "release-artifacts/rendereye_mcp-${VERSION}-py3-none-any.whl" \
+            "release-artifacts/rendereye_mcp-${VERSION}.tar.gz" \
+            "release-artifacts/RenderEyeMCP-v${VERSION}.zip" \
+            "release-artifacts/RenderEyeMCP-Extension-v${VERSION}.zip" \
+            "release-artifacts/SHA256SUMS.txt"
+          echo "Release published: $(gh release view "$TAG" --json url -q .url)"

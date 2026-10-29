@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "rendereye": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "python",
+        "-m",
+        "rendereye_mcp"
+      ]
+    }
+  }
+}

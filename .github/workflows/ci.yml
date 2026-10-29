@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install dev dependencies
+        run: uv sync --dev
+      - name: Run ruff
+        run: uv run ruff check src/ tests/
+      - name: Check documentation links and translations
+        run: uv run python scripts/check_docs.py
+
+  test:
+    name: Test (${{ matrix.os }} / Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest]
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: uv sync --dev
+      - name: Run tests
+        run: uv run pytest tests/ -v --tb=short
+
+  build-check:
+    name: Build Check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - name: Build wheel and sdist
+        run: uv build
+      - name: Check distributions with twine
+        shell: bash
+        run: uvx twine check dist/*.whl dist/*.tar.gz
+      - name: Validate version consistency
+        run: uv run python scripts/validate_release.py --check-versions
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-dist-${{ matrix.os }}
+          path: dist/
+          retention-days: 7
+
+  install-verify:
+    name: Install Verify (${{ matrix.os }} / Python ${{ matrix.python-version }})
+    needs: build-check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - name: Build wheel
+        run: uv build --wheel
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install wheel in clean virtual environment (no uv)
+        shell: bash
+        run: |
+          python -m venv ci-install-env
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            VENV_BIN=ci-install-env/Scripts
+          else
+            VENV_BIN=ci-install-env/bin
+          fi
+          $VENV_BIN/python -m pip install --upgrade pip
+          $VENV_BIN/python -m pip install dist/*.whl
+          $VENV_BIN/python -c "import rendereye_mcp; print('Version:', rendereye_mcp.__version__)"
+          $VENV_BIN/python -c "from rendereye_mcp.__main__ import main; print('Entry point: OK')"
+          $VENV_BIN/python -m rendereye_mcp --help 2>/dev/null || true
