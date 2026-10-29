@@ -12,12 +12,15 @@ RenderEyeMCP は長期間有効な API トークンの代わりに **PyPI Truste
 シークレットはリポジトリに保存しません。認証は、設定された GitHub Environment 内で
 ワークフローが実行される際に GitHub Actions OIDC を通じて自動的に行われます。
 
-2 つの公開先がサポートされています:
+2 つの独立したワークフローが、2 つの独立した公開先を処理します:
 
-| 公開先 | タグ形式 | バージョン | 用途 |
-|---|---|---|---|
-| PyPI | `v1.0.0` | `1.0.0` | 正式リリース |
-| TestPyPI | `v1.0.0-test.1` | `1.0.0.dev1` | 最初のリリース前の検証 |
+| ワークフローファイル | 公開先 | タグ形式 | バージョン | 用途 |
+|---|---|---|---|---|
+| `publish-pypi.yml` | PyPI | `v1.0.0` | `1.0.0` | 正式リリース |
+| `publish-testpypi.yml` | TestPyPI | `v1.0.0-test.1` | `1.0.0.dev1` | リリース前検証 |
+
+各ワークフローファイルは、ファイルレベルで公開先が固定されています。実行時に PyPI と
+TestPyPI を切り替える共有ワークフローは存在しません。
 
 ---
 
@@ -31,8 +34,9 @@ vMAJOR.MINOR.PATCH
 
 例: `v0.1.0`、`v1.0.0`、`v1.2.3`
 
-これらのタグは `pypi` 公開ジョブを起動します。パッケージバージョンは先頭の `v` を
-除いたタグです。
+これらのタグは `publish-pypi.yml` を起動します。パッケージバージョンは先頭の `v` を
+除いたタグです。ソースファイル (`pyproject.toml`、`__init__.py`、`extension.json`) の
+バージョンは、タグをプッシュする前にタグと一致している必要があります。
 
 ### テストタグ
 
@@ -42,7 +46,7 @@ vMAJOR.MINOR.PATCH-test.N
 
 例: `v0.1.0-test.1`、`v0.1.0-test.2`、`v1.0.0-test.1`
 
-`N` は正の整数 (`>= 1`) でなければなりません。これらのタグは `testpypi` 公開ジョブを
+`N` は正の整数 (`>= 1`) でなければなりません。これらのタグは `publish-testpypi.yml` を
 起動します。パッケージバージョンは PEP 440 の開発バージョンに正規化されます:
 
 | Git タグ | パッケージバージョン |
@@ -69,37 +73,76 @@ vMAJOR.MINOR.PATCH-test.N
 
 ---
 
+## ワークフロー: `publish-testpypi.yml`
+
+ワークフローファイルは `.github/workflows/publish-testpypi.yml` です。
+
+### トリガー
+
+`v*-test.*` に一致するタグへのプッシュ。
+
+### ジョブ構造
+
+```
+タグプッシュ (v*-test.*)
+    |
+    classify ── タグがテストリリースであることを検証し、それ以外を拒否
+    |              出力: version=x.y.z.devN
+    |
+    build ── チェックアウト、バージョン x.y.z.devN を注入、uv build、twine check、スモークテスト
+    |
+    publish-testpypi → environment: testpypi → https://test.pypi.org/legacy/
+```
+
+### 主要な特性
+
+- `id-token: write` は `publish-testpypi` **のみ**に付与されます。`classify` と
+  `build` ジョブは OIDC 権限を受け取りません。
+- `classify` ジョブはテストタグ以外のすべてのタグを拒否します。誤ってプッシュされた
+  本番タグは TestPyPI アップロードを起動できません。
+- `publish-testpypi` ジョブは OIDC 認証情報を要求する前にバージョンに `.dev` が
+  含まれていることを確認する明示的なガードステップを持っています。
+- 同じタグの重複アップロードを防ぐために `concurrency` を使用します。
+
+---
+
 ## ワークフロー: `publish-pypi.yml`
 
 ワークフローファイルは `.github/workflows/publish-pypi.yml` です。
+
+### トリガー
+
+`v*` に一致するタグへのプッシュ。
 
 ### ジョブ構造
 
 ```
 タグプッシュ (v*)
     |
-    classify ── タグを検証し、kind=production|test|invalid、version=x.y.z を出力
+    classify ── タグが本番リリースであることを検証し、それ以外を拒否
+    |              出力: version=x.y.z
     |
-    build ── チェックアウト、(テスト時はバージョンを注入)、uv build、twine check、スモークテスト
+    build ── チェックアウト、ソースバージョンがタグと一致するか検証、uv build、twine check、スモークテスト
     |
-    +------ publish-pypi    (kind == production の場合) → environment: pypi
-    |
-    +------ publish-testpypi (kind == test の場合)     → environment: testpypi
+    publish-pypi → environment: pypi → https://pypi.org/
 ```
 
 ### 主要な特性
 
-- `id-token: write` はビルドジョブやテストジョブではなく、**公開ジョブのみ**に付与されます。
-- 両方の公開ジョブには、OIDC 認証情報を要求する前に分類を再確認する明示的なガードステップがあります。
-- ワークフローは同じタグの重複アップロードを防ぐために `concurrency` を使用します。
-- ビルドジョブは、アップロード前にホイールバージョンがタグと一致することを確認します。
-- 無効なタグは公開に到達せず、`classify` ジョブで失敗します。
+- `id-token: write` は `publish-pypi` **のみ**に付与されます。`classify` と
+  `build` ジョブは OIDC 権限を受け取りません。
+- `classify` ジョブは本番タグ以外のすべてのタグを拒否します。テストタグ (`v*-test.*`)
+  やその他のサフィックス付きタグはビルドや公開に進むことができません。
+- `publish-pypi` ジョブは OIDC 認証情報を要求する前にバージョンにプレリリースセグメントが
+  含まれていないことを確認する明示的なガードステップを持っています。
+- 同じタグの重複アップロードを防ぐために `concurrency` を使用します。
 
 ---
 
 ## Trusted Publishing の設定
 
 公開が成功するには、各インデックスで Trusted Publisher を登録する必要があります。
+2 つのワークフローは**独立した** Trusted Publisher 登録を使用します。
 
 ### 必要なアカウント
 
@@ -118,18 +161,28 @@ vMAJOR.MINOR.PATCH-test.N
 
 ### Trusted Publisher の登録
 
-各インデックスで Trusted Publisher を登録します。以下の正確な値を使用してください:
+**各**インデックスで Trusted Publisher を登録します。以下の正確な値を使用してください:
 
-| フィールド | PyPI | TestPyPI |
-|---|---|---|
-| リポジトリオーナー | `taqu` | `taqu` |
-| リポジトリ名 | `RenderEyeMCP` | `RenderEyeMCP` |
-| ワークフローファイル名 | `publish-pypi.yml` | `publish-pypi.yml` |
-| Environment 名 | `pypi` | `testpypi` |
+**TestPyPI** — https://test.pypi.org/manage/account/publishing/
 
-**PyPI**: https://pypi.org/manage/account/publishing/
+| フィールド | 値 |
+|---|---|
+| リポジトリオーナー | `taqu` |
+| リポジトリ名 | `RenderEyeMCP` |
+| ワークフローファイル名 | `publish-testpypi.yml` |
+| Environment 名 | `testpypi` |
 
-**TestPyPI**: https://test.pypi.org/manage/account/publishing/
+**PyPI** — https://pypi.org/manage/account/publishing/
+
+| フィールド | 値 |
+|---|---|
+| リポジトリオーナー | `taqu` |
+| リポジトリ名 | `RenderEyeMCP` |
+| ワークフローファイル名 | `publish-pypi.yml` |
+| Environment 名 | `pypi` |
+
+⚠️ ワークフローファイル名は対応する Trusted Publisher 登録と完全に一致する必要があります。
+両方のワークフローファイルに同じファイル名を使用しないでください。
 
 インデックスに `rendereye-mcp` プロジェクトがまだ存在しない場合は、上記と同じ値で
 **Pending Publisher** を登録してください。最初のアップロード時にプロジェクトが
@@ -156,9 +209,9 @@ git push origin v1.0.0-test.2
 
 ### ステップ 2 — ワークフローを監視する
 
-リポジトリの **Actions** タブを開きます。`Publish to PyPI` ワークフローが実行されます:
+リポジトリの **Actions** タブを開きます。`Publish to TestPyPI` ワークフローが実行されます:
 
-1. `Classify Tag` — タグ形式を確認し、`kind=test` を出力
+1. `Validate Test Tag` — タグ形式を確認し、`version=1.0.0.dev1` を出力
 2. `Build Distributions` — バージョン `1.0.0.dev1` を注入し、ホイールと sdist をビルドし、スモークテストを実行
 3. `Publish to TestPyPI` — OIDC で認証し、TestPyPI にアップロード
 
@@ -180,8 +233,8 @@ python -m pip install \
 ```
 
 **注意**: `--extra-index-url` で PyPI を追加することで、TestPyPI にミラーされていない
-依存関係を pip で解決できます。依存関係は本番 PyPI から解決されることに注意してください。
-すべての期待される依存関係が正しくインストールされることを確認してください。
+依存関係を pip で解決できます。すべての期待される依存関係が正しくインストールされることを
+確認してください。
 
 ### ステップ 5 — インストールされたパッケージをスモークテストする
 
@@ -246,9 +299,11 @@ python -c "import rendereye_mcp; print(rendereye_mcp.__version__)"
 
 ## セキュリティに関する注意
 
-- `id-token: write` は `publish-pypi` と `publish-testpypi` ジョブのみに付与されます。
+- `id-token: write` は各ワークフローの公開ジョブのみに付与されます。
   `classify` と `build` ジョブは OIDC 権限を受け取りません。
-- 各公開ジョブには、公開前にタグの分類を再確認する明示的なガードステップがあり、
+- 各ワークフローは公開先がファイルレベルで固定されています — 実行時に PyPI と
+  TestPyPI を選択する条件分岐はありません。
+- 各公開ジョブには、公開前にバージョン形式を再確認する明示的なガードステップがあり、
   多層防御を提供します。
 - 長期間有効な PyPI トークンは GitHub シークレットに保存しません。
 - GitHub Environment 名と登録済みの Trusted Publisher 間の不一致は OIDC 認証の
@@ -264,9 +319,18 @@ python -c "import rendereye_mcp; print(rendereye_mcp.__version__)"
 
 **症状**: アップロード中の `403 Forbidden` または OIDC トークン交換の失敗。
 
-**修正**: Trusted Publisher がリポジトリオーナー (`taqu`)、リポジトリ名
-(`RenderEyeMCP`)、ワークフローファイル名 (`publish-pypi.yml`)、Environment 名
-(`pypi` または `testpypi`) の正確な値でインデックスに登録されていることを確認します。
+**修正**: Trusted Publisher が正しいインデックスに、リポジトリオーナー (`taqu`)、
+リポジトリ名 (`RenderEyeMCP`)、ワークフローファイル名 (TestPyPI には
+`publish-testpypi.yml`、PyPI には `publish-pypi.yml`)、Environment 名
+(`testpypi` または `pypi`) の正確な値で登録されていることを確認します。
+
+### Trusted Publisher 登録のワークフローファイル名が間違っている
+
+**症状**: Environment 名が正しいにもかかわらず OIDC 認証が失敗する。
+
+**修正**: TestPyPI 登録には `publish-testpypi.yml` を使用する必要があります。
+PyPI 登録には `publish-pypi.yml` を使用する必要があります。両方の登録に同じ
+ファイル名を使用しないでください。
 
 ### 間違った Environment 名
 
@@ -317,9 +381,10 @@ python -c "import rendereye_mcp; print(rendereye_mcp.__version__)"
 
 | 項目 | ステータス |
 |---|---|
-| タグ分類ロジック | ✅ テスト済み (59 ユニットテスト) |
+| タグ分類ロジック | ✅ テスト済み (ユニットテスト) |
 | バージョン正規化 | ✅ テスト済み (PEP 440 バリデーション) |
 | 公開先の分離 | ✅ テスト済み (本番/テスト/無効は交差不可) |
+| ワークフロー YAML 構造 | ✅ テスト済み (独立したジョブ、クロス公開なし) |
 | ホイールのビルドとスモークテスト | ✅ `uv build` でローカルテスト済み |
 | `twine check` メタデータ検証 | ✅ ローカルでパス |
 | OIDC Trusted Publisher 登録 | ⏳ 外部セットアップ待ち (PyPI + TestPyPI アカウント) |

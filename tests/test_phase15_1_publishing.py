@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -247,6 +248,7 @@ class TestSetBuildVersion:
         ("v1.2.3", "production", "1.2.3"),
         ("v0.1.0-test.1", "test", "0.1.0.dev1"),
         ("v0.1.0-test.2", "test", "0.1.0.dev2"),
+        ("v1.2.3-test.1", "test", "1.2.3.dev1"),
         ("v0.1.0-test.foo", "invalid", None),
         ("v0.1.0-debug", "invalid", None),
         ("v0.1", "invalid", None),
@@ -254,9 +256,193 @@ class TestSetBuildVersion:
     ],
 )
 def test_spec_acceptance_table(tag, expected_kind, expected_version):
-    """Verify every row in spec section 11.1 acceptance table."""
+    """Verify every row in the phase15.1 acceptance table."""
     r = classify(tag)
     assert r.kind == expected_kind, f"tag={tag!r}: expected kind={expected_kind!r}, got {r.kind!r}"
     assert r.version == expected_version, (
         f"tag={tag!r}: expected version={expected_version!r}, got {r.version!r}"
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Workflow YAML structure validation
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestWorkflowStructure:
+    """Verify each workflow YAML has the correct publishing isolation."""
+
+    PYPI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "publish-pypi.yml"
+    TESTPYPI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "publish-testpypi.yml"
+
+    def _load_yaml(self, path: Path) -> dict:
+        try:
+            import yaml
+        except ImportError:
+            pytest.skip("pyyaml not installed")
+        with open(path, encoding="utf-8") as f:
+            return yaml.safe_load(f)
+
+    def _raw_text(self, path: Path) -> str:
+        return path.read_text(encoding="utf-8")
+
+    def test_workflow_files_exist(self):
+        assert self.PYPI_WORKFLOW.exists(), "publish-pypi.yml not found"
+        assert self.TESTPYPI_WORKFLOW.exists(), "publish-testpypi.yml not found"
+
+    def test_pypi_workflow_name(self):
+        data = self._load_yaml(self.PYPI_WORKFLOW)
+        assert data["name"] == "Publish to PyPI"
+
+    def test_testpypi_workflow_name(self):
+        data = self._load_yaml(self.TESTPYPI_WORKFLOW)
+        assert data["name"] == "Publish to TestPyPI"
+
+    def test_pypi_workflow_has_no_testpypi_job(self):
+        data = self._load_yaml(self.PYPI_WORKFLOW)
+        jobs = data.get("jobs", {})
+        assert "publish-testpypi" not in jobs, (
+            "publish-pypi.yml must not contain a publish-testpypi job"
+        )
+
+    def test_testpypi_workflow_has_no_pypi_job(self):
+        data = self._load_yaml(self.TESTPYPI_WORKFLOW)
+        jobs = data.get("jobs", {})
+        assert "publish-pypi" not in jobs, (
+            "publish-testpypi.yml must not contain a publish-pypi job"
+        )
+
+    def test_pypi_workflow_has_publish_pypi_job(self):
+        data = self._load_yaml(self.PYPI_WORKFLOW)
+        jobs = data.get("jobs", {})
+        assert "publish-pypi" in jobs, "publish-pypi.yml must contain a publish-pypi job"
+
+    def test_testpypi_workflow_has_publish_testpypi_job(self):
+        data = self._load_yaml(self.TESTPYPI_WORKFLOW)
+        jobs = data.get("jobs", {})
+        assert "publish-testpypi" in jobs, (
+            "publish-testpypi.yml must contain a publish-testpypi job"
+        )
+
+    def test_pypi_workflow_environment_is_pypi(self):
+        data = self._load_yaml(self.PYPI_WORKFLOW)
+        job = data["jobs"]["publish-pypi"]
+        env = job.get("environment", {})
+        name = env.get("name") if isinstance(env, dict) else env
+        assert name == "pypi", f"publish-pypi job environment must be 'pypi', got {name!r}"
+
+    def test_testpypi_workflow_environment_is_testpypi(self):
+        data = self._load_yaml(self.TESTPYPI_WORKFLOW)
+        job = data["jobs"]["publish-testpypi"]
+        env = job.get("environment", {})
+        name = env.get("name") if isinstance(env, dict) else env
+        assert name == "testpypi", (
+            f"publish-testpypi job environment must be 'testpypi', got {name!r}"
+        )
+
+    def test_pypi_workflow_publish_job_has_oidc_permission(self):
+        data = self._load_yaml(self.PYPI_WORKFLOW)
+        job = data["jobs"]["publish-pypi"]
+        perms = job.get("permissions", {})
+        assert perms.get("id-token") == "write", (
+            "publish-pypi job must have id-token: write"
+        )
+
+    def test_testpypi_workflow_publish_job_has_oidc_permission(self):
+        data = self._load_yaml(self.TESTPYPI_WORKFLOW)
+        job = data["jobs"]["publish-testpypi"]
+        perms = job.get("permissions", {})
+        assert perms.get("id-token") == "write", (
+            "publish-testpypi job must have id-token: write"
+        )
+
+    def test_pypi_workflow_build_job_lacks_oidc_permission(self):
+        data = self._load_yaml(self.PYPI_WORKFLOW)
+        job = data["jobs"]["build"]
+        perms = job.get("permissions", {})
+        assert perms.get("id-token") != "write", (
+            "build job in publish-pypi.yml must not have id-token: write"
+        )
+
+    def test_testpypi_workflow_build_job_lacks_oidc_permission(self):
+        data = self._load_yaml(self.TESTPYPI_WORKFLOW)
+        job = data["jobs"]["build"]
+        perms = job.get("permissions", {})
+        assert perms.get("id-token") != "write", (
+            "build job in publish-testpypi.yml must not have id-token: write"
+        )
+
+    def test_pypi_workflow_uses_pypi_action(self):
+        text = self._raw_text(self.PYPI_WORKFLOW)
+        assert "pypa/gh-action-pypi-publish" in text, (
+            "publish-pypi.yml must use pypa/gh-action-pypi-publish"
+        )
+        # Must NOT contain TestPyPI repository URL
+        assert "test.pypi.org/legacy" not in text, (
+            "publish-pypi.yml must not reference test.pypi.org/legacy"
+        )
+
+    def test_testpypi_workflow_uses_testpypi_url(self):
+        text = self._raw_text(self.TESTPYPI_WORKFLOW)
+        assert "test.pypi.org/legacy" in text, (
+            "publish-testpypi.yml must publish to https://test.pypi.org/legacy/"
+        )
+
+    def test_pypi_workflow_trigger_pattern(self):
+        data = self._load_yaml(self.PYPI_WORKFLOW)
+        # pyyaml parses the bare 'on' key as Python True (YAML boolean alias)
+        on = data.get("on") or data.get(True)
+        tags = on["push"]["tags"]
+        assert "v*" in tags, "publish-pypi.yml must trigger on v* tags"
+
+    def test_testpypi_workflow_trigger_pattern(self):
+        data = self._load_yaml(self.TESTPYPI_WORKFLOW)
+        on = data.get("on") or data.get(True)
+        tags = on["push"]["tags"]
+        assert any("test" in t for t in tags), (
+            "publish-testpypi.yml must trigger on test-release tag patterns"
+        )
+
+    def test_pypi_workflow_rejects_test_tags_in_classify(self):
+        text = self._raw_text(self.PYPI_WORKFLOW)
+        # Must reference a guard against non-production tags
+        assert "production" in text, (
+            "publish-pypi.yml classify job must validate kind == production"
+        )
+
+    def test_testpypi_workflow_rejects_production_tags_in_classify(self):
+        text = self._raw_text(self.TESTPYPI_WORKFLOW)
+        # Must reference a guard against non-test tags
+        assert "kind" in text and "test" in text, (
+            "publish-testpypi.yml classify job must validate kind == test"
+        )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Phase 15.1 acceptance table (full spec)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "tag,testpypi_publishes,pypi_publishes",
+    [
+        ("v0.1.0",       False, True),
+        ("v0.1.0-test.1", True, False),
+        ("v0.1.0-test.2", True, False),
+        ("v1.2.3",       False, True),
+        ("v1.2.3-test.1", True, False),
+        ("v1.2.3-debug", False, False),
+        ("v1.2",         False, False),
+    ],
+)
+def test_phase15_1_acceptance_table(tag, testpypi_publishes, pypi_publishes):
+    """Verify the phase15.1 acceptance table for tag routing."""
+    r = classify(tag)
+    actual_pypi = r.kind == "production"
+    actual_testpypi = r.kind == "test"
+    assert actual_pypi == pypi_publishes, (
+        f"tag={tag!r}: PyPI expected={pypi_publishes}, got kind={r.kind!r}"
+    )
+    assert actual_testpypi == testpypi_publishes, (
+        f"tag={tag!r}: TestPyPI expected={testpypi_publishes}, got kind={r.kind!r}"
     )

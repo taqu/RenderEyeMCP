@@ -12,12 +12,15 @@ API tokens. No `PYPI_API_TOKEN` or `TEST_PYPI_API_TOKEN` secrets are stored in t
 repository. Authentication happens automatically through GitHub Actions OIDC when the
 workflow runs inside the configured GitHub Environment.
 
-Two publishing destinations are supported:
+Two separate workflows handle publishing to two separate destinations:
 
-| Destination | Tag format | Version | Use |
-|---|---|---|---|
-| PyPI | `v1.0.0` | `1.0.0` | Official releases |
-| TestPyPI | `v1.0.0-test.1` | `1.0.0.dev1` | Validation before first release |
+| Workflow file | Destination | Tag format | Version | Use |
+|---|---|---|---|---|
+| `publish-pypi.yml` | PyPI | `v1.0.0` | `1.0.0` | Official releases |
+| `publish-testpypi.yml` | TestPyPI | `v1.0.0-test.1` | `1.0.0.dev1` | Pre-release validation |
+
+Each workflow file has its publishing destination fixed at the file level. There is no
+shared workflow that selects between PyPI and TestPyPI at runtime.
 
 ---
 
@@ -31,8 +34,9 @@ vMAJOR.MINOR.PATCH
 
 Examples: `v0.1.0`, `v1.0.0`, `v1.2.3`
 
-These tags trigger the `pypi` publishing job. The package version is the tag with
-the leading `v` removed.
+These tags trigger `publish-pypi.yml`. The package version is the tag with the
+leading `v` removed. The version in source files (`pyproject.toml`, `__init__.py`,
+`extension.json`) must already match the tag before it is pushed.
 
 ### Test tags
 
@@ -42,8 +46,8 @@ vMAJOR.MINOR.PATCH-test.N
 
 Examples: `v0.1.0-test.1`, `v0.1.0-test.2`, `v1.0.0-test.1`
 
-`N` must be a positive integer (`>= 1`). These tags trigger the `testpypi` publishing
-job. The package version is normalized to a PEP 440 development version:
+`N` must be a positive integer (`>= 1`). These tags trigger `publish-testpypi.yml`.
+The package version is normalized to a PEP 440 development version:
 
 | Git tag | Package version |
 |---|---|
@@ -69,38 +73,74 @@ The following tag formats are **rejected** — no publishing occurs:
 
 ---
 
+## Workflow: `publish-testpypi.yml`
+
+The workflow file is `.github/workflows/publish-testpypi.yml`.
+
+### Trigger
+
+Pushes to tags matching `v*-test.*`.
+
+### Job structure
+
+```
+Tag Push (v*-test.*)
+    |
+    classify ── validates tag is a test release, rejects all others
+    |              outputs: version=x.y.z.devN
+    |
+    build ── checkout, inject version x.y.z.devN, uv build, twine check, smoke test
+    |
+    publish-testpypi → environment: testpypi → https://test.pypi.org/legacy/
+```
+
+### Key properties
+
+- `id-token: write` is granted **only** to `publish-testpypi`, not to `classify` or `build`.
+- The `classify` job rejects any tag that is not a test tag (`vMAJOR.MINOR.PATCH-test.N`).
+  Production tags pushed accidentally cannot trigger a TestPyPI upload.
+- The `publish-testpypi` job has an explicit guard step that confirms the version
+  contains `.dev` before requesting OIDC credentials.
+- The workflow uses `concurrency` to prevent duplicate uploads for the same tag.
+
+---
+
 ## Workflow: `publish-pypi.yml`
 
 The workflow file is `.github/workflows/publish-pypi.yml`.
+
+### Trigger
+
+Pushes to tags matching `v*`.
 
 ### Job structure
 
 ```
 Tag Push (v*)
     |
-    classify ── validates tag, outputs: kind=production|test|invalid, version=x.y.z
+    classify ── validates tag is a production release, rejects all others
+    |              outputs: version=x.y.z
     |
-    build ── checkout, (inject version if test), uv build, twine check, smoke test
+    build ── checkout, validate source version matches tag, uv build, twine check, smoke test
     |
-    +------ publish-pypi    (if kind == production) → environment: pypi
-    |
-    +------ publish-testpypi (if kind == test)      → environment: testpypi
+    publish-pypi → environment: pypi → https://pypi.org/
 ```
 
 ### Key properties
 
-- `id-token: write` is granted **only** to publishing jobs, not to build or test jobs.
-- Both publishing jobs have an explicit guard step that verifies the classification
-  before requesting OIDC credentials.
+- `id-token: write` is granted **only** to `publish-pypi`, not to `classify` or `build`.
+- The `classify` job rejects any tag that is not a production tag (`vMAJOR.MINOR.PATCH`).
+  Test tags (`v*-test.*`) and any other suffixed tags cannot proceed to build or publish.
+- The `publish-pypi` job has an explicit guard step that confirms the version does not
+  contain a pre-release segment before requesting OIDC credentials.
 - The workflow uses `concurrency` to prevent duplicate uploads for the same tag.
-- The build job verifies the wheel version matches the tag before uploading.
-- Invalid tags fail at the `classify` job without reaching publishing.
 
 ---
 
 ## Setting Up Trusted Publishing
 
 Before publishing can succeed you must register a Trusted Publisher on each index.
+The two workflows use **separate** Trusted Publisher registrations.
 
 ### Required accounts
 
@@ -120,18 +160,28 @@ Create two GitHub Environments in the repository settings
 
 ### Trusted Publisher registration
 
-Register a Trusted Publisher on each index. Use these exact values:
+Register a Trusted Publisher on **each** index. Use these exact values:
 
-| Field | PyPI | TestPyPI |
-|---|---|---|
-| Repository owner | `taqu` | `taqu` |
-| Repository name | `RenderEyeMCP` | `RenderEyeMCP` |
-| Workflow filename | `publish-pypi.yml` | `publish-pypi.yml` |
-| Environment name | `pypi` | `testpypi` |
+**TestPyPI** — https://test.pypi.org/manage/account/publishing/
 
-**PyPI**: https://pypi.org/manage/account/publishing/
+| Field | Value |
+|---|---|
+| Repository owner | `taqu` |
+| Repository name | `RenderEyeMCP` |
+| Workflow filename | `publish-testpypi.yml` |
+| Environment name | `testpypi` |
 
-**TestPyPI**: https://test.pypi.org/manage/account/publishing/
+**PyPI** — https://pypi.org/manage/account/publishing/
+
+| Field | Value |
+|---|---|
+| Repository owner | `taqu` |
+| Repository name | `RenderEyeMCP` |
+| Workflow filename | `publish-pypi.yml` |
+| Environment name | `pypi` |
+
+⚠️ The workflow filename must match the corresponding Trusted Publisher registration
+exactly. Do not use a single registration for both workflow files.
 
 If the `rendereye-mcp` project does not yet exist on an index, register a
 **Pending Publisher** using the same fields above. The project is created
@@ -157,9 +207,9 @@ git push origin v1.0.0-test.2
 
 ### Step 2 — Monitor the workflow
 
-Open the **Actions** tab in the repository. The `Publish to PyPI` workflow runs:
+Open the **Actions** tab in the repository. The `Publish to TestPyPI` workflow runs:
 
-1. `Classify Tag` — verifies the tag format, outputs `kind=test`
+1. `Validate Test Tag` — verifies the tag format, outputs `version=1.0.0.dev1`
 2. `Build Distributions` — injects version `1.0.0.dev1`, builds wheel and sdist, runs smoke test
 3. `Publish to TestPyPI` — authenticates via OIDC, uploads to TestPyPI
 
@@ -181,8 +231,7 @@ python -m pip install \
 ```
 
 **Note**: Using `--extra-index-url` with PyPI allows pip to resolve dependencies that
-are not mirrored on TestPyPI. Be aware that this means dependencies are resolved from
-production PyPI, not TestPyPI. Verify that all expected dependencies install correctly.
+are not mirrored on TestPyPI. Verify that all expected dependencies install correctly.
 
 ### Step 5 — Smoke test the installed package
 
@@ -246,11 +295,13 @@ python -c "import rendereye_mcp; print(rendereye_mcp.__version__)"
 
 ## Security Notes
 
-- `id-token: write` is granted only to `publish-pypi` and `publish-testpypi` jobs.
+- `id-token: write` is granted only to the publishing job in each workflow.
   The `classify` and `build` jobs do not receive OIDC permissions.
-- Each publishing job has an explicit guard step that re-checks the tag classification
+- Each publishing job has an explicit guard step that re-checks the version format
   before publishing, providing defense in depth.
 - No long-lived PyPI tokens are stored as GitHub Secrets.
+- Each workflow has its publishing destination fixed at the file level — there is no
+  runtime conditional that selects between PyPI and TestPyPI.
 - A mismatch between the GitHub Environment name and the registered Trusted Publisher
   causes OIDC authentication to fail — misconfiguration cannot silently publish to the
   wrong index.
@@ -264,9 +315,17 @@ python -c "import rendereye_mcp; print(rendereye_mcp.__version__)"
 
 **Symptom**: `403 Forbidden` during upload or OIDC token exchange failure.
 
-**Fix**: Ensure the Trusted Publisher is registered on the index with the exact
-repository owner (`taqu`), repository name (`RenderEyeMCP`), workflow filename
-(`publish-pypi.yml`), and environment name (`pypi` or `testpypi`).
+**Fix**: Ensure the Trusted Publisher is registered on the correct index with the
+exact repository owner (`taqu`), repository name (`RenderEyeMCP`), workflow filename
+(`publish-testpypi.yml` for TestPyPI, `publish-pypi.yml` for PyPI), and environment
+name (`testpypi` or `pypi`).
+
+### Wrong workflow filename in Trusted Publisher registration
+
+**Symptom**: OIDC authentication fails even though the environment name is correct.
+
+**Fix**: TestPyPI registration must use `publish-testpypi.yml`. PyPI registration must
+use `publish-pypi.yml`. Do not use the same filename for both registrations.
 
 ### Wrong environment name
 
@@ -308,9 +367,7 @@ PyPI and that `src/rendereye_mcp/__main__.py` exports `main`.
 
 **Symptom**: `pip install` from TestPyPI fails because a dependency is not mirrored.
 
-**Fix**: Add `--extra-index-url https://pypi.org/simple/` as shown above. If a
-dependency is too new for TestPyPI to have it, pin older compatible versions for the
-test install.
+**Fix**: Add `--extra-index-url https://pypi.org/simple/` as shown above.
 
 ---
 
@@ -318,9 +375,10 @@ test install.
 
 | Item | Status |
 |---|---|
-| Tag classification logic | ✅ Tested (59 unit tests) |
+| Tag classification logic | ✅ Tested (unit tests) |
 | Version normalization | ✅ Tested (PEP 440 validation) |
 | Destination isolation | ✅ Tested (production/test/invalid cannot cross) |
+| Workflow YAML structure | ✅ Tested (separate jobs, no cross-publishing) |
 | Wheel build and smoke test | ✅ Tested locally via `uv build` |
 | `twine check` metadata validation | ✅ Passes locally |
 | OIDC Trusted Publisher registration | ⏳ Pending external setup (PyPI + TestPyPI accounts) |
