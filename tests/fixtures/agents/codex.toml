@@ -1,0 +1,27 @@
+# Keep these preferences and literal Windows path keys.
+model = "example-model"
+model_reasoning_effort = "high"
+approval_policy = "on-request"
+unknown_future = { nested = { name = "日本語", count = 4 } }
+model_availability_nux = { "gpt-6-astra" = 4, "gpt-6.1-sol" = 4 }
+
+[projects.'d:\projects\cpp\pathtrace']
+trust_level = "trusted"
+[projects.'d:\projects\go\agentcap']
+trust_level = "trusted"
+[windows]
+sandbox = "elevated"
+[tui]
+screen_reader_detection_done = true
+[profiles.work]
+model = "example-model"
+[profiles.personal]
+model_reasoning_effort = "low"
+[model_providers.custom]
+name = "custom"
+base_url = "https://example.invalid"
+[mcp_servers.other]
+command = "other-server"
+args = []
+[mcp_servers.other.env]
+SYNTHETIC_TOKEN = "test-only"

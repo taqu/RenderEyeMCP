@@ -1,0 +1,194 @@
+name: Publish to PyPI
+
+# Triggered by any tag starting with "v". The classify job determines whether
+# the tag is a production release, a test release, or invalid. Only valid tags
+# proceed to build and publish. Invalid tags fail the workflow without publishing.
+on:
+  push:
+    tags:
+      - "v*"
+
+# Prevent duplicate publishes for the same tag. Do not cancel once a publishing
+# job may have started — PyPI does not allow replacing an uploaded distribution.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # CLASSIFY: parse the Git tag and determine publishing destination.
+  # ──────────────────────────────────────────────────────────────────────────
+  classify:
+    name: Classify Tag
+    runs-on: ubuntu-latest
+    outputs:
+      kind: ${{ steps.cls.outputs.kind }}
+      version: ${{ steps.cls.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - name: Install dependencies
+        run: uv sync
+      - name: Classify tag
+        id: cls
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          echo "Tag: $TAG"
+          uv run python scripts/classify_tag.py --gha "$TAG"
+          uv run python scripts/classify_tag.py "$TAG"
+      - name: Reject invalid tags
+        if: steps.cls.outputs.kind == 'invalid'
+        run: |
+          echo "ERROR: Tag '${GITHUB_REF#refs/tags/}' is invalid. No publishing will occur."
+          exit 1
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # BUILD: build and validate the Python distributions.
+  # ──────────────────────────────────────────────────────────────────────────
+  build:
+    name: Build Distributions
+    needs: [classify]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync
+
+      # For production tags, the version in source files must already match the tag.
+      - name: Validate production tag matches source version
+        if: needs.classify.outputs.kind == 'production'
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          uv run python scripts/validate_release.py --check-versions --tag "$TAG"
+
+      # For test tags, inject the normalized dev version into source files.
+      # These changes are NOT committed — they exist only in this CI workspace.
+      - name: Inject test version into source files
+        if: needs.classify.outputs.kind == 'test'
+        shell: bash
+        run: |
+          uv run python scripts/set_build_version.py "${{ needs.classify.outputs.version }}"
+
+      - name: Build wheel and source distribution
+        run: uv build
+
+      - name: Verify built distribution version matches expected
+        shell: bash
+        run: |
+          EXPECTED="${{ needs.classify.outputs.version }}"
+          # Extract version from wheel filename: name-VERSION-py3-none-any.whl
+          WHL=$(ls dist/*.whl | head -1)
+          ACTUAL=$(python -c "
+          import sys
+          whl = '$WHL'.replace('\\\\', '/').split('/')[-1]
+          print(whl.split('-')[1])
+          ")
+          echo "Expected version: $EXPECTED"
+          echo "Wheel version:    $ACTUAL"
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "ERROR: Version mismatch — aborting before upload."
+            exit 1
+          fi
+
+      - name: Validate distributions with twine
+        run: uvx twine check dist/*.whl dist/*.tar.gz
+
+      - name: Install wheel in clean venv (smoke test)
+        shell: bash
+        run: |
+          python -m venv build-verify-env
+          build-verify-env/bin/pip install --upgrade pip --quiet
+          build-verify-env/bin/pip install dist/*.whl --quiet
+          build-verify-env/bin/python -c "
+          import rendereye_mcp
+          expected = '${{ needs.classify.outputs.version }}'
+          actual   = rendereye_mcp.__version__
+          assert actual == expected, f'Version mismatch: {actual!r} != {expected!r}'
+          print('Installed version OK:', actual)
+          "
+          build-verify-env/bin/python -c "from rendereye_mcp.__main__ import main; print('Entry point OK')"
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-dist-${{ needs.classify.outputs.version }}
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+          retention-days: 7
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # PUBLISH TO PYPI: production tags only.
+  # Uses the "pypi" GitHub Environment and OIDC Trusted Publishing.
+  # Never runs for test tags.
+  # ──────────────────────────────────────────────────────────────────────────
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [classify, build]
+    if: needs.classify.outputs.kind == 'production'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/rendereye-mcp/${{ needs.classify.outputs.version }}
+    permissions:
+      id-token: write   # Required for OIDC Trusted Publishing
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-dist-${{ needs.classify.outputs.version }}
+          path: dist/
+      - name: Verify production tag guard
+        shell: bash
+        run: |
+          KIND="${{ needs.classify.outputs.kind }}"
+          if [ "$KIND" != "production" ]; then
+            echo "ERROR: publish-pypi job reached with kind=$KIND — aborting."
+            exit 1
+          fi
+          echo "Production tag confirmed — publishing to PyPI."
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # PUBLISH TO TESTPYPI: test tags only.
+  # Uses the "testpypi" GitHub Environment and OIDC Trusted Publishing.
+  # Never runs for production tags.
+  # ──────────────────────────────────────────────────────────────────────────
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: [classify, build]
+    if: needs.classify.outputs.kind == 'test'
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/rendereye-mcp/${{ needs.classify.outputs.version }}
+    permissions:
+      id-token: write   # Required for OIDC Trusted Publishing
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-dist-${{ needs.classify.outputs.version }}
+          path: dist/
+      - name: Verify test tag guard
+        shell: bash
+        run: |
+          KIND="${{ needs.classify.outputs.kind }}"
+          if [ "$KIND" != "test" ]; then
+            echo "ERROR: publish-testpypi job reached with kind=$KIND — aborting."
+            exit 1
+          fi
+          echo "Test tag confirmed — publishing to TestPyPI."
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/

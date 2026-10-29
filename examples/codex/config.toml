@@ -1,0 +1,7 @@
+# OpenAI Codex CLI MCP configuration
+# Place in: ~/.codex/config.toml  (create the file if it does not exist)
+# Replace <USERNAME> with your Windows username.
+
+[mcp_servers.rendereye]
+command = "C:\\Users\\<USERNAME>\\AppData\\Local\\RenderEyeMCP\\venv\\Scripts\\python.exe"
+args = ["-m", "rendereye_mcp"]

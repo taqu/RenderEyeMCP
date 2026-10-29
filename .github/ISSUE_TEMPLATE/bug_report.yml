@@ -1,0 +1,67 @@
+name: Bug report / 不具合報告
+description: Something does not work as documented. / ドキュメントどおりに動かない。
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please remove anything confidential (paths, resource or shader names, images) before posting.
+        Do not attach proprietary captures. / 機密情報は削除し、プロプライエタリなCaptureは添付しないでください。
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened? / 何が起きたか
+      description: Prompt or tool call, the result, and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce / 再現手順
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system / OS
+      placeholder: Windows 11 23H2
+    validations:
+      required: true
+  - type: input
+    id: renderdoc
+    attributes:
+      label: RenderDoc version
+      placeholder: "1.46"
+    validations:
+      required: true
+  - type: input
+    id: rendereye
+    attributes:
+      label: RenderEyeMCP version (`rendereye-mcp --version`)
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: Coding agent and version / コーディングエージェント
+      placeholder: Claude Code 2.x / Codex 0.x
+    validations:
+      required: true
+  - type: dropdown
+    id: api
+    attributes:
+      label: Graphics API of the capture
+      options: [D3D12, D3D11, Vulkan, OpenGL, Not applicable / unknown]
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`rendereye-mcp doctor` output"
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / ログ
+      description: Agent MCP log, `rendereye-mcp service run` output, or RenderDoc log (%TEMP%\RenderDoc).
+      render: text
