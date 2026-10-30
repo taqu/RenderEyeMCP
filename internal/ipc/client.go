@@ -16,7 +16,7 @@ type Client struct {
 
 // NewClient dials a TCP connection to the given host and port.
 func NewClient(host string, port int) (*Client, error) {
-	addr := fmt.Sprintf("%s:%d", host, port)
+	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("dial %s: %w", addr, err)

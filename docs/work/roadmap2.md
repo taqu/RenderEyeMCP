@@ -1,151 +1,364 @@
-# RenderEyeMCP — 開発状況と今後の方針まとめ
+# RenderEyeMCP — Development Roadmap
 
-2026年10月30日｜次の設計議論に向けた整理
+## Vision
 
-## 1. プロジェクトの目的
+**RenderEyeMCP enables AI coding agents to inspect and debug graphics captures directly through RenderDoc.**
 
-RenderEyeMCP は、RenderDocとAI Coding Agent（Claude Code、Codexなど）を接続し、グラフィックスデバッグを支援するOSSプロジェクト。
+The project integrates RenderDoc with MCP-compatible coding agents, including Claude Code and Codex.
 
-基本思想は、開発者が普段使用しているRenderDocを、そのままCoding Agentから調査できるようにすること。
+Its goal is to make graphics debugging more accessible and efficient by allowing developers to investigate rendering problems through natural-language requests.
 
-Unity、Unreal Engine、RenderDoc GUIから開かれたCaptureを対象に、AgentがDrawCall、Pipeline State、GPU Resource、Shaderなどの情報を取得し、問題の原因を分析する。
+RenderEyeMCP does not replace RenderDoc, implement its own GPU debugger, or perform autonomous graphics optimization.
 
-RenderDocの代替や独自GPU Debuggerの開発は目的としない。
+Instead, it exposes RenderDoc's existing inspection and debugging capabilities to coding agents through a reliable MCP interface.
 
-## 2. これまでのロードマップ
+## Core Principles
 
-| Phase | 内容                                 |
-| ----- | ---------------------------------- |
-| 0〜4   | 基本機能、RenderDoc Extension、MCP連携     |
-| 5〜5.5 | インストーラー、配布、README改善                |
-| 6     | Shared IPC Service、複数Agent対応       |
-| 7     | RenderDoc GUIとロード済みCaptureの検出      |
-| 8     | DrawCall、Event、Pipeline State      |
-| 9     | GPU Resource、Texture / Buffer情報    |
-| 10    | Shader Inspection、Reflection       |
-| 11    | Render Target、Texture画像、Pixel値     |
-| 12    | リリース準備、日英ドキュメント                    |
-| 13    | GPU Performance Analysis           |
-| 13.1  | Performance AnalysisのE2E実行シナリオ     |
-| 14    | Geometry、Vertex / Index、Post-VS    |
-| 15    | Pixel History、Shader Debugging     |
+1. **RenderDoc remains the source of truth.** Use captures already loaded in the RenderDoc GUI.
+2. **Preserve the developer's workflow.** Do not unnecessarily modify GUI selection or replay state.
+3. **Support multiple coding agents.** Independent MCP clients must safely share the same RenderDoc environment.
+4. **Reuse RenderDoc APIs.** Avoid independently implementing GPU debugging functionality.
+5. **Keep installation simple.** Normal users should not need to manage Python environments, virtual environments, or developer toolchains.
+6. **Prioritize stability.** Disconnections, capture changes, and replay failures must be handled safely.
+7. **Support multiple platforms.** Maintain Windows as a primary target while improving Linux and other platform compatibility where RenderDoc supports them.
+8. **Separate data retrieval from analysis.** RenderEyeMCP provides reliable debugging evidence; coding agents interpret it.
 
-## 3. 現在の技術方針
+---
 
-Coding Agents
+## Architecture
 
-Claude Code / Codex / MCP Clients
+### Original Python Infrastructure
 
-RenderEyeMCP
+```text
+Claude Code ── Python MCP Bridge ──┐
+                                   │
+Codex ─────── Python MCP Bridge ──┼── Python Shared IPC Service
+                                   │     TCP 127.0.0.1:37020
+RenderDoc ─── Python Extension ────┘
+```
 
-MCP Server / Shared IPC Service
+The Shared IPC Service is an independent daemon process.
 
-RenderDoc Extension
+### Target Go Infrastructure
 
-Replay API / GUI State / Capture Inspection
+```text
+Claude Code ── rendereye-mcp ──┐
+                               │
+Codex ─────── rendereye-mcp ──┼── rendereye-mcp service
+                               │     TCP 127.0.0.1:37020
+RenderDoc ─── Python Extension ┘
+```
 
-RenderDoc GUI
+The Go MCP Bridge and Shared IPC Service use a single executable with separate operating modes.
 
-Existing Capture / Replay Context
+They remain independent processes.
 
-今後も以下を維持する。
+The RenderDoc Extension continues using RenderDoc's Python API.
 
-- RenderDoc GUIを状態の正本（Source of Truth）とする。
-- CaptureをAgentが開き直すことを要求しない。
-- 複数Agentが同じRenderDocを安全に利用できる。
-- Replay操作は適切に調停し、GUIの状態を不用意に変更しない。
-- Resource、Event、Captureの識別を厳密にする。
-- MCP Toolは情報取得を担当し、分析や原因推定はCoding Agentに任せる。
+This architecture eliminates the requirement for a user-managed Python environment for the MCP and IPC infrastructure.
 
-## 4. 今後の主軸
+---
 
-RenderDocのAPIで公開されている主要な情報取得機能を利用する段階まで進んだため、今後は機能の数を増やすよりも、次の2分野を重視する。
+## Development Phases
 
-### A. Stability & Reliability
+### Stage 1 — Foundation and Initial Integration
 
-最優先
+| Phase | Title | Objectives |
+|---|---|---|
+| 0 | Project Foundation | Establish project structure, development environment, and basic integration architecture |
+| 1 | RenderDoc Extension Foundation | Implement the initial RenderDoc extension and API access |
+| 2 | MCP Server Foundation | Expose basic RenderDoc functionality through MCP |
+| 3 | IPC Integration | Establish communication between the MCP server and RenderDoc |
+| 4 | Core Integration | Extend basic inspection capabilities and validate end-to-end communication |
+| 5 | Installation and Distribution | Improve Windows installation, configuration, and packaging |
+| 5.1 | Installation Improvements | Simplify installation on clean Windows environments and configure coding agents |
+| 5.2 | GitHub Actions Releases | Introduce automated release artifact generation |
+| 5.5 | Documentation and Usability | Improve README, setup instructions, and user guidance |
 
-| 領域                  | 改善方針                                      |
-| ------------------- | ----------------------------------------- |
-| IPC                 | 再接続、切断、タイムアウト、クラッシュ復旧                     |
-| Multi-Agent         | 同時アクセス、Replay競合、リソース所有権                   |
-| RenderDoc Lifecycle | 起動、終了、Capture切り替え、Extension再接続            |
-| Replay Safety       | GPU Counter、Post-VS、Shader Debuggingの実行調停 |
-| Resource Management | Debug Trace、Replay Output、キャッシュの解放        |
-| Error Handling      | 構造化エラー、部分失敗、Unsupportedの明示                |
-| Testing             | 自動回帰テスト、実CaptureでのE2Eテスト                  |
+**Milestone:** RenderEyeMCP can connect a coding agent to RenderDoc and provide a usable installation and debugging workflow.
 
-特に重要なのは、Agentの不適切なTool呼び出しや途中切断によって、RenderDocが不安定にならないこと。
+### Stage 2 — Shared IPC and RenderDoc Inspection
 
-また、RenderEyeMCPの更新時に、以前動作していたGPUデバッグ機能を壊さないことを重視する。
+| Phase | Title | Objectives |
+|---|---|---|
+| 6 | Shared IPC Service | Introduce a standalone shared daemon supporting multiple independent MCP processes |
+| 7 | GUI State Discovery | Detect RenderDoc sessions, loaded captures, and GUI state |
+| 8 | Event and Pipeline Inspection | Inspect draw calls, compute dispatches, event hierarchies, and pipeline state |
+| 9 | GPU Resource Inspection | Retrieve texture and buffer metadata and bounded buffer contents |
+| 10 | Shader Inspection | Retrieve shader information, reflection, bindings, and disassembly |
+| 11 | Render Target and Pixel Inspection | Inspect render targets, texture images, and pixel values |
 
-### B. Cross-Platform Support
+**Milestone:** Coding agents can investigate rendering state in captures already opened in RenderDoc.
 
-Windows-firstを維持しながら対応を拡大
+The Shared IPC Service must maintain correct routing and isolation when multiple coding agents are connected.
 
-| 領域           | 改善方針                                |
-| ------------ | ----------------------------------- |
-| Windows      | 主力環境として品質維持                         |
-| Linux        | RenderDoc Extension、IPC、配布、起動の対応改善  |
-| macOS        | RenderDoc本体の対応状況と制約を確認して対応範囲を判断     |
-| IPC          | OS固有の通信・プロセス管理を抽象化                  |
-| Installation | OSごとに簡単な導入方法を提供                     |
-| CI           | Windows / Linux / macOSで実行可能なテストを分離 |
-| Packaging    | Wheel、依存関係、Extension配布の互換性確保        |
+### Stage 3 — Advanced Debugging and Release Preparation
 
-マルチプラットフォーム対応では、RenderDoc自体が対応していない機能をRenderEyeMCP側で無理に再実装しない 方針とする。
+| Phase | Title | Objectives |
+|---|---|---|
+| 12 | Release Preparation | Prepare bilingual documentation, installation validation, and practical debugging examples |
+| 13 | GPU Performance Analysis | Collect GPU timing counters, pipeline statistics, and render-pass performance summaries |
+| 13.1 | Performance E2E Validation | Validate real coding-agent performance analysis using an existing capture |
+| 14 | Geometry and Mesh Inspection | Inspect vertex/index buffers, input layouts, Post-VS geometry, and mesh statistics |
+| 15 | Pixel History and Shader Debugging | Inspect pixel modifications, shader execution traces, and variable states |
+| 15.1 | PyPI Trusted Publishing | Add isolated PyPI and TestPyPI publishing workflows using OIDC |
 
-RenderDocのAPI、Graphics API、Replay環境による差異は、Capabilityとして公開する。
+Phase 15.1 requires separate GitHub Actions workflows:
 
-## 5. 次の開発ロードマップ案
+```text
+.github/workflows/
+  publish-testpypi.yml
+  publish-pypi.yml
+```
 
-今後は大きな機能追加ではなく、品質改善フェーズとして整理する。
+Test tags such as `v0.1.0-test.1` publish to TestPyPI using a PEP 440-compatible version such as `0.1.0.dev1`.
 
-| Phase案 | テーマ                            | 目的                          |
-| ------ | ------------------------------ | --------------------------- |
-| 16     | Reliability Hardening          | IPC、Replay、Lifecycleの安定化    |
-| 17     | Cross-Platform Foundation      | OS依存部分の整理とLinux対応強化         |
-| 18     | Cross-Platform Distribution    | インストール、Packaging、CI整備       |
-| 19     | E2E Regression & Compatibility | 実Capture・複数Agent・複数OSの検証    |
-| 継続     | Maintenance                    | RenderDoc API追従、バグ修正、ドキュメント |
+Production tags such as `v0.1.0` publish to PyPI.
 
-番号や範囲は今後の議論で調整可能。
+**Milestone:** RenderEyeMCP exposes the major RenderDoc inspection and debugging capabilities needed for practical AI-assisted graphics debugging.
 
-## 6. 基本的な非目標
+Advanced features must respect RenderDoc capability availability and replay-thread requirements.
 
-今後も以下は原則として対象外とする。
+---
 
-- RenderDocのGPU Replay機能を独自に再実装する。
-- 独自のGPU ProfilerやShader Debuggerを開発する。
-- RenderDoc GUIを置き換える。
-- Coding Agent専用の独自診断AIを内蔵する。
-- 特定GPUベンダーの非公開APIに強く依存する。
-- RenderDoc本体の未対応プラットフォームを独自に完全サポートする。
+## Stage 4 — Migration from Python Infrastructure to Go
 
-RenderDocで新しいAPIが公開された場合は、その価値と保守コストを評価したうえで機能を追加する。
+The primary objective of this stage is to eliminate installation complexity while preserving MCP compatibility and multi-agent reliability.
 
-## 7. 次の議論で決めたいこと
+### Phase 16 — IPC Protocol Contract & Compatibility Tests
 
-今後の設計で最も重要なのは、次の3点だと思います。
+Document and validate the existing Python IPC protocol before migration.
 
-① Shared IPC Serviceの長期安定性
+Key deliverables:
 
-RenderDoc GUI、MCP Process、Shared IPC Serviceがそれぞれ独立して終了・再起動しても、接続関係と状態が安全に復旧する設計をどこまで保証するか。
+- IPC protocol specification.
+- Message framing and serialization contract.
+- Session and request routing semantics.
+- Binary payload compatibility.
+- Golden protocol fixtures.
+- Python compatibility tests.
+- Minimal Go IPC probe.
+- Cross-language interoperability tests.
 
-② Linux対応の優先範囲
+The Python implementation remains authoritative during this phase.
 
-Windowsと完全に同じ機能を目指すのか、まずはExtension接続・Capture情報・基本的なReplay Inspectionを確実に使えるようにするのか。
+**Completion condition:** Go can communicate correctly with the existing Python Shared IPC Service, and the protocol is sufficiently documented and tested for replacement.
 
-③ RenderDoc APIのバージョン互換性
+### Phase 17 — Go Shared IPC Service
 
-RenderDocの更新でExtension APIが変化したとき、複数バージョンへの対応、Capability Detection、最低サポートバージョンをどのように管理するか。
+Replace the standalone Python Shared IPC Service with a compatible Go daemon.
 
-## まとめ
+Preserve:
 
-RenderEyeMCPは、主要なGPU情報取得・デバッグ機能の実装を目指すロードマップを一通り定義した段階にあります。
+- Existing TCP endpoint.
+- Existing IPC protocol.
+- Python MCP Bridge compatibility.
+- Python RenderDoc Extension compatibility.
+- Multi-client request routing.
+- Session and capture identity.
+- Service startup and lifecycle behavior.
 
-今後のプロジェクト方針は次のように整理できます。
+Keep the Python service available for rollback.
 
-「機能拡張中心の開発」から「信頼性・互換性・マルチプラットフォーム対応中心の開発」へ移行する。
+**Completion condition:** Two Python MCP Bridges and the existing RenderDoc Extension can operate correctly through the Go Shared IPC Service.
 
-RenderDocの進化に追従しながら、既存のCoding Agentワークフローをより安定して使えるOSSとして成熟させることを目指します。
+### Phase 18 — Go MCP Bridge
+
+Replace the Python MCP Bridge with a Go implementation using the official MCP Go SDK.
+
+Key deliverables:
+
+- Go MCP stdio server.
+- Complete migration of implemented MCP tools.
+- Compatible Tool names and descriptions.
+- Compatible input and output schemas.
+- Correct text, image, and structured results.
+- Shared Go IPC client integration.
+- MCP contract snapshot tests.
+- Python/Go differential tests.
+- Claude Code and Codex integration tests.
+
+Do not modify the RenderDoc Extension or IPC protocol to accommodate the new MCP Bridge.
+
+**Completion condition:** The Go MCP Bridge can replace the Python Bridge without changing coding-agent workflows.
+
+### Phase 19 — Single Binary & Cross-Platform Distribution
+
+Combine the Go MCP Bridge and Go Shared IPC Service into one executable with multiple operating modes.
+
+Required behavior:
+
+```text
+rendereye-mcp          # MCP Bridge
+rendereye-mcp service  # Shared IPC Service
+```
+
+Each coding agent launches its own Bridge process. The Bridges reuse one independently running Shared IPC Service.
+
+Key deliverables:
+
+- Service discovery and automatic startup.
+- Concurrent startup race prevention.
+- Native Windows and Linux binaries.
+- macOS binary support with clearly documented RenderDoc limitations.
+- RenderDoc Extension packaged with releases.
+- Installation and upgrade scripts.
+- GitHub Releases build automation.
+- Checksums and artifact validation.
+- English and Japanese installation documentation.
+
+Existing PyPI and TestPyPI publishing workflows remain separate from Go binary release automation.
+
+**Completion condition:** A user can install RenderEyeMCP and configure a coding agent without installing Python, uv, pip, or Go.
+
+### Phase 20 — Reliability Hardening, Migration & Compatibility
+
+Prepare the Go implementation to become the official default distribution.
+
+Primary workstreams:
+
+- Service startup, shutdown, and restart reliability.
+- Multi-agent concurrency and request isolation.
+- Capture/session lifecycle safety.
+- Timeout and cancellation handling.
+- Replay-dependent operation coordination.
+- Goroutine, socket, and memory leak prevention.
+- RenderDoc version compatibility.
+- Windows and Linux integration testing.
+- Cross-platform installation and upgrade validation.
+- Python-to-Go migration and rollback.
+- Regression testing and release quality gates.
+- English and Japanese documentation updates.
+
+Evaluate deprecation of the legacy Python MCP Bridge and Python Shared IPC Service only after the Go implementation has passed the required compatibility and reliability tests.
+
+The RenderDoc Python Extension remains supported.
+
+**Completion condition:** The Go implementation is reliable enough to become the recommended default, with documented platform support and a safe migration path.
+
+---
+
+## Long-Term Maintenance
+
+After Phase 20, development priorities shift from major feature expansion to maintaining a stable, compatible, easy-to-install graphics debugging tool.
+
+### Priority 1 — Reliability
+
+- Prevent service and client lifecycle regressions.
+- Maintain multi-agent safety.
+- Improve recovery from failures.
+- Preserve capture and replay state.
+- Prevent resource leaks and deadlocks.
+
+### Priority 2 — Platform Compatibility
+
+- Maintain high-quality Windows support.
+- Improve native Linux support.
+- Validate other platforms according to RenderDoc availability.
+- Keep installation and upgrade procedures straightforward.
+
+### Priority 3 — RenderDoc Compatibility
+
+- Support relevant RenderDoc updates.
+- Detect API and feature availability.
+- Adapt the Python Extension to upstream API changes.
+- Avoid protocol or MCP Tool contract breakage.
+
+### Priority 4 — User Experience
+
+- Improve diagnostics and troubleshooting.
+- Maintain practical coding-agent debugging examples.
+- Keep English and Japanese documentation accurate.
+- Reduce configuration and installation steps.
+
+### Priority 5 — Feature Expansion
+
+Introduce additional GPU debugging functionality when RenderDoc exposes useful new APIs or when a clearly justified user requirement can be satisfied through existing capabilities.
+
+Do not implement an independent GPU debugger or profiler merely to expand the feature list.
+
+---
+
+## Non-Goals
+
+RenderEyeMCP is not intended to:
+
+- Replace the RenderDoc GUI.
+- Reimplement RenderDoc's ReplayController.
+- Implement a proprietary GPU debugger.
+- Become a standalone hardware profiler.
+- Automatically repair shaders or rendering bugs.
+- Bundle a dedicated AI reasoning engine.
+- Depend on cloud services for IPC or capture inspection.
+- Require users to install a Python or Go development environment.
+- Guarantee full RenderDoc functionality on unsupported operating systems.
+
+---
+
+## Release and Compatibility Policy
+
+The project should maintain the following requirements:
+
+**Stable MCP Interface**
+
+Avoid unnecessary changes to existing Tool names, schemas, and result semantics.
+
+**Stable IPC Protocol**
+
+Use compatibility tests to identify unintended breaking changes.
+
+**Versioned Release Artifacts**
+
+Distribute traceable native binaries with consistent version metadata.
+
+**Separate Publishing Destinations**
+
+Maintain independent PyPI, TestPyPI, and GitHub Releases publishing paths.
+
+**Verified Platform Claims**
+
+Distinguish successful compilation from tested runtime and RenderDoc integration.
+
+**Backward-Compatible Migration**
+
+Keep legacy Python infrastructure available during the supported transition period.
+
+**No Automatic Production Publishing During Development**
+
+Release preparation and validation do not imply authorization to publish a production release.
+
+---
+
+## Project Milestones
+
+| Milestone | Related phases | Outcome |
+|---|---|---|
+| M1 — Initial Integration | 0–5.5 | RenderDoc and MCP connection established |
+| M2 — Multi-Agent Foundation | 6–7 | Shared IPC and active capture discovery |
+| M3 — Core Inspection | 8–11 | Event, pipeline, shader, resource, and pixel inspection |
+| M4 — Advanced Debugging | 12–15.1 | Performance, geometry, shader debugging, documentation, and publishing preparation |
+| M5 — Go Infrastructure | 16–18 | Compatible Go Shared IPC Service and MCP Bridge |
+| M6 — Native Distribution | 19 | Single executable and simplified cross-platform installation |
+| M7 — Stable Go Adoption | 20 | Reliability validation, migration readiness, and maintenance policy |
+
+Milestone definitions describe intended capabilities, not proof of implementation or testing.
+
+Track actual completion status separately from the roadmap.
+
+---
+
+## Final Target
+
+RenderEyeMCP should become a reliable, cross-platform-friendly companion to RenderDoc that allows developers to investigate graphics problems through their preferred coding agents.
+
+The desired user workflow is:
+
+1. Install RenderDoc.
+2. Download and install RenderEyeMCP.
+3. Configure Claude Code, Codex, or another MCP-compatible agent.
+4. Open a graphics capture in RenderDoc.
+5. Ask the agent to inspect the capture and investigate a problem.
+
+The user should not need to manage Python virtual environments, manually start IPC daemons, or export debugging data between applications.
+
+**The long-term development focus is stability, ease of installation, multi-agent compatibility, and continued support for RenderDoc's evolving APIs.**
