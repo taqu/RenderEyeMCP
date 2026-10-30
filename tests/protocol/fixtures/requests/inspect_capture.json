@@ -1,0 +1,11 @@
+{
+  "category": "requests",
+  "description": "InspectCaptureRequestMessage service requests capture inspection from extension",
+  "wire": "{\"request_id\":\"99999999-0000-0000-0000-000000000001\",\"operation\":\"get_pipeline_state\",\"params\":{\"event_id\":42},\"type\":\"inspect_capture\"}\n",
+  "fields": {
+    "request_id": "99999999-0000-0000-0000-000000000001",
+    "operation": "get_pipeline_state",
+    "params": {"event_id": 42},
+    "type": "inspect_capture"
+  }
+}

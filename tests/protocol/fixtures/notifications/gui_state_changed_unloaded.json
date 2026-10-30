@@ -1,0 +1,13 @@
+{
+  "category": "notifications",
+  "description": "GuiStateChangedMessage extension pushes GUI state change with capture unloaded",
+  "wire": "{\"instance_id\":\"bbbbbbbb-0000-0000-0000-000000000001\",\"revision\":6,\"capture_loaded\":false,\"capture_path\":null,\"capture_state\":\"unloaded\",\"type\":\"gui_state_changed\"}\n",
+  "fields": {
+    "instance_id": "bbbbbbbb-0000-0000-0000-000000000001",
+    "revision": 6,
+    "capture_loaded": false,
+    "capture_path": null,
+    "capture_state": "unloaded",
+    "type": "gui_state_changed"
+  }
+}

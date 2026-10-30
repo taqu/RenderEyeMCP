@@ -1,0 +1,12 @@
+{
+  "category": "connection",
+  "description": "BridgeRegisterAckMessage service acknowledges bridge registration",
+  "wire": "{\"request_id\":\"eeeeeeee-0000-0000-0000-000000000001\",\"bridge_connection_id\":\"11111111-0000-0000-0000-000000000001\",\"service_version\":\"1.0.0\",\"type\":\"bridge_register_ack\",\"protocol_version\":1}\n",
+  "fields": {
+    "request_id": "eeeeeeee-0000-0000-0000-000000000001",
+    "bridge_connection_id": "11111111-0000-0000-0000-000000000001",
+    "service_version": "1.0.0",
+    "type": "bridge_register_ack",
+    "protocol_version": 1
+  }
+}

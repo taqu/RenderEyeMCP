@@ -1,0 +1,9 @@
+{
+  "category": "requests",
+  "description": "GetGuiStateMessage server requests current GUI state snapshot from extension",
+  "wire": "{\"request_id\":\"66666666-0000-0000-0000-000000000001\",\"type\":\"get_gui_state\"}\n",
+  "fields": {
+    "request_id": "66666666-0000-0000-0000-000000000001",
+    "type": "get_gui_state"
+  }
+}

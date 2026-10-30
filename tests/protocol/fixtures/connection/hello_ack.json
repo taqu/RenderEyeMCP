@@ -1,0 +1,11 @@
+{
+  "category": "connection",
+  "description": "HelloAckMessage server acknowledgement of HelloMessage",
+  "wire": "{\"request_id\":\"aaaaaaaa-0000-0000-0000-000000000001\",\"server_version\":\"1.0.0\",\"type\":\"hello_ack\",\"protocol_version\":1}\n",
+  "fields": {
+    "request_id": "aaaaaaaa-0000-0000-0000-000000000001",
+    "server_version": "1.0.0",
+    "type": "hello_ack",
+    "protocol_version": 1
+  }
+}

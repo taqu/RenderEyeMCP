@@ -1,0 +1,14 @@
+{
+  "category": "responses",
+  "description": "GuiCommandResultMessage extension reports result of a GUI command",
+  "wire": "{\"request_id\":\"77777777-0000-0000-0000-000000000001\",\"command\":\"open_capture\",\"success\":true,\"outcome\":\"success\",\"error\":\"\",\"state_revision\":6,\"type\":\"gui_command_result\"}\n",
+  "fields": {
+    "request_id": "77777777-0000-0000-0000-000000000001",
+    "command": "open_capture",
+    "success": true,
+    "outcome": "success",
+    "error": "",
+    "state_revision": 6,
+    "type": "gui_command_result"
+  }
+}

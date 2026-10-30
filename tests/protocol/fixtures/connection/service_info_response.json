@@ -1,0 +1,14 @@
+{
+  "category": "connection",
+  "description": "ServiceInfoResponseMessage service responds with identity information",
+  "wire": "{\"request_id\":\"22222222-0000-0000-0000-000000000001\",\"service_name\":\"RenderEyeMCP\",\"service_version\":\"1.0.0\",\"service_pid\":54321,\"service_instance_id\":\"33333333-0000-0000-0000-000000000001\",\"type\":\"service_info_response\",\"protocol_version\":1}\n",
+  "fields": {
+    "request_id": "22222222-0000-0000-0000-000000000001",
+    "service_name": "RenderEyeMCP",
+    "service_version": "1.0.0",
+    "service_pid": 54321,
+    "service_instance_id": "33333333-0000-0000-0000-000000000001",
+    "type": "service_info_response",
+    "protocol_version": 1
+  }
+}

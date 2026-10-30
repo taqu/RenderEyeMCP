@@ -1,0 +1,12 @@
+{
+  "category": "binary",
+  "description": "ToolResultMessage with base64-encoded binary data representing 4 bytes: 0x00, 0x01, 0x02, 0xFF",
+  "wire": "{\"request_id\":\"88888888-0000-0000-0000-000000000003\",\"tool_name\":\"get_texture_image\",\"result\":{\"data\":\"AAEC/w==\",\"encoding\":\"base64\",\"size\":4},\"error\":\"\",\"type\":\"tool_result\"}\n",
+  "fields": {
+    "request_id": "88888888-0000-0000-0000-000000000003",
+    "tool_name": "get_texture_image",
+    "result": {"data": "AAEC/w==", "encoding": "base64", "size": 4},
+    "error": "",
+    "type": "tool_result"
+  }
+}

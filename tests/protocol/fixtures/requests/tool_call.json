@@ -1,0 +1,12 @@
+{
+  "category": "requests",
+  "description": "ToolCallMessage bridge forwards MCP tool call to service for execution",
+  "wire": "{\"request_id\":\"88888888-0000-0000-0000-000000000001\",\"bridge_connection_id\":\"11111111-0000-0000-0000-000000000001\",\"tool_name\":\"list_renderdoc_sessions\",\"arguments\":{},\"type\":\"tool_call\"}\n",
+  "fields": {
+    "request_id": "88888888-0000-0000-0000-000000000001",
+    "bridge_connection_id": "11111111-0000-0000-0000-000000000001",
+    "tool_name": "list_renderdoc_sessions",
+    "arguments": {},
+    "type": "tool_call"
+  }
+}
