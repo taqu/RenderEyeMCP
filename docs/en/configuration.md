@@ -12,53 +12,32 @@
 
 ## How an agent talks to RenderEyeMCP
 
-Every agent starts the same command over stdio:
+Every agent starts the `rendereye-mcp` executable over stdio. No subcommand is needed;
+the default mode is the MCP Bridge:
 
 ```text
-<path to rendereye-mcp executable> serve
+<path to rendereye-mcp executable>
 ```
 
-`rendereye-mcp setup-agent <agent>` writes this entry for you. It:
-
-- uses the absolute path of the `rendereye-mcp` executable you ran it with,
-- adds `RENDEREYE_ENV_FILE` to the entry when that variable is set in your terminal,
-- edits only the `rendereye` entry, keeps every other setting, refuses malformed files,
-  and saves the previous file as `.bak` (then `.bak.1`, …) before writing.
-
-Useful options: `--dry-run` (preview only), `--scope project --project-path <dir>`,
-`--force` (replace a different existing `rendereye` entry), `--remove`.
-Details: [configuration safety](../agent_configuration_safety.md).
-
-> Run `setup-agent` from a **new terminal opened after `rendereye-mcp setup`** so the
-> entry includes `RENDEREYE_ENV_FILE`. Without it the agent still works, as long as the
-> agent process itself was started after setup.
+Add this to your agent's MCP server configuration and restart the agent.
 
 ## Connect Claude Code
 
-**Prerequisites:** Claude Code installed; `rendereye-mcp setup` completed.
-
-```powershell
-rendereye-mcp setup-agent claude-code                 # user scope: ~/.claude.json
-rendereye-mcp setup-agent claude-code --scope project # project scope: .mcp.json in the current directory
-```
-
-Manual equivalent (user scope, `~/.claude.json` → `mcpServers`). Replace the paths with
-your own; `where.exe rendereye-mcp` prints the executable path.
+Add to `~/.claude.json` (user scope) or `.mcp.json` in your project (project scope):
 
 ```json
 {
   "mcpServers": {
     "rendereye": {
-      "type": "stdio",
-      "command": "C:\\Users\\<you>\\.local\\bin\\rendereye-mcp.exe",
-      "args": ["serve"],
-      "env": {
-        "RENDEREYE_ENV_FILE": "C:\\Users\\<you>\\AppData\\Local\\RenderEyeMCP\\.env"
-      }
+      "command": "C:\\Users\\<you>\\AppData\\Local\\RenderEyeMCP\\rendereye-mcp.exe"
     }
   }
 }
 ```
+
+Replace the path with the actual location of `rendereye-mcp.exe` — the installer places
+it at `%LOCALAPPDATA%\RenderEyeMCP\rendereye-mcp.exe` by default. On Linux or macOS use
+the path from `which rendereye-mcp`.
 
 Restart Claude Code, then confirm:
 
@@ -76,22 +55,12 @@ Claude Code-specific notes:
 
 ## Connect Codex
 
-**Prerequisites:** Codex CLI installed; `rendereye-mcp setup` completed.
-
-```powershell
-rendereye-mcp setup-agent codex                  # user scope: ~/.codex/config.toml (honors CODEX_HOME)
-rendereye-mcp setup-agent codex --scope project  # <project>/.codex/config.toml
-```
-
-Manual equivalent (TOML — escape backslashes):
+Add to `~/.codex/config.toml` (user scope) or `<project>/.codex/config.toml` (project
+scope):
 
 ```toml
 [mcp_servers.rendereye]
-command = "C:\\Users\\<you>\\.local\\bin\\rendereye-mcp.exe"
-args = ["serve"]
-
-[mcp_servers.rendereye.env]
-RENDEREYE_ENV_FILE = "C:\\Users\\<you>\\AppData\\Local\\RenderEyeMCP\\.env"
+command = "C:\\Users\\<you>\\AppData\\Local\\RenderEyeMCP\\rendereye-mcp.exe"
 ```
 
 Confirm:
@@ -100,17 +69,15 @@ Confirm:
 codex mcp list
 ```
 
-`rendereye` should be listed. Codex-specific notes:
+`rendereye` should be listed.
 
 - Project-scope configuration is only read for projects you have marked as trusted.
-- `setup-agent code` is an alias for Codex, not for VS Code (use `vscode`).
 
 ## Other MCP clients
 
-`setup-agent` also writes configuration for `cursor`, `vscode` (GitHub Copilot) and
-`gemini`. Those files are produced and validated by the automated tests, but the real
-clients were **not** exercised for this release. Any MCP client that can start a stdio
-server with the command above should work; please report results.
+Any MCP client that can start a stdio server works. Use the `rendereye-mcp` executable
+path as the command with no arguments. Please report results for clients other than Claude
+Code and Codex.
 
 ## Verify the connection
 
@@ -118,7 +85,7 @@ Check each layer separately:
 
 | Check | Command or prompt | Expected |
 |-------|-------------------|----------|
-| Agent config is valid | `rendereye-mcp doctor --agent claude-code` (or `codex`) | No `✗` lines |
+| Binary works | `rendereye-mcp version` | Version line |
 | Agent can start the server | `claude mcp get rendereye` / `codex mcp list` | Connected / listed |
 | Tools are discovered | Ask: *"Call server_status."* | `server_name: RenderEyeMCP`, `server_version` |
 | RenderDoc is reachable | Ask: *"List the RenderDoc sessions."* | A session with `connection_state: connected` |
@@ -132,13 +99,13 @@ is a useful hint.
 ## Use several agents at once
 
 RenderEyeMCP runs one **shared IPC service** per user session. Each agent starts its own
-small `rendereye-mcp serve` process; all of them connect to the same service, and the
+`rendereye-mcp` process (MCP Bridge); all of them connect to the same service, and the
 service is the only process that talks to RenderDoc.
 
 ```text
-Claude Code ──stdio── rendereye-mcp serve ─┐
-                                            ├─ TCP 127.0.0.1:37020 ─ shared service ─ RenderDoc extension(s)
-Codex ───────stdio── rendereye-mcp serve ─┘
+Claude Code ──stdio── rendereye-mcp ─┐
+                                     ├─ TCP 127.0.0.1:37020 ─ rendereye-mcp service ─ RenderDoc extension(s)
+Codex ───────stdio── rendereye-mcp ─┘
 ```
 
 No extra configuration is needed: configure both agents as above and start them in any
@@ -151,40 +118,33 @@ order. Example:
 Both answers come from the same RenderDoc session. All inspection tools are read-only,
 so concurrent use does not interfere. Do not allocate separate ports per agent.
 
-The service keeps running after the agents exit. Stop it with
-`rendereye-mcp service stop`; it is started again on demand.
+The service keeps running until you stop it or restart your machine. To stop it, kill the
+`rendereye-mcp service` process; it will be started again automatically the next time an
+agent launches.
 
 ## Environment settings (.env)
 
-Settings are read from the `.env` file that `RENDEREYE_ENV_FILE` points to. Precedence:
+Settings are read from a `.env` file. The bridge looks for the file at
+`RENDEREYE_ENV_FILE` (if that environment variable is set), otherwise falls back to
+`.env` in the current working directory. Precedence:
 
 1. Environment variables already set in the process (highest)
 2. Values in the `.env` file
 3. Built-in defaults
 
-If `RENDEREYE_ENV_FILE` is not set, a `.env` in the current working directory is used
-when present (development convenience). Most users never need to edit `.env`.
+The default configuration (host `127.0.0.1`, port `37020`) works without editing `.env`.
+Most users never need to edit it.
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `RENDEREYE_RENDERDOC_EXE` | detected by setup | Full path to `qrenderdoc.exe` (status checks and `capture_open`) |
-| `RENDEREYE_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
 | `RENDEREYE_IPC_HOST` | `127.0.0.1` | Service address. Loopback only; `0.0.0.0` is refused |
-| `RENDEREYE_IPC_PORT` | `37020` | Service port (see note below) |
-| `RENDEREYE_CONNECTION_TIMEOUT` | `10.0` | IPC connection timeout in seconds |
-| `RENDEREYE_STORAGE_PATH` | `%APPDATA%\rendereye_mcp\captures.db` | SQLite database for the capture registry and sessions |
-| `RENDEREYE_CAPTURE_ENABLED` | `true` | Enable `.rdc` file discovery |
-| `RENDEREYE_CAPTURE_DIRS` | empty | Folders to watch for `.rdc` files, separated by `;` on Windows and `:` on Linux |
-| `RENDEREYE_CAPTURE_SCAN_INTERVAL` | `10.0` | Background rescan interval (seconds) |
-| `RENDEREYE_CAPTURE_STABILITY_SECONDS` | `2.0` | How long a new file must stay unchanged before it is "ready" |
+| `RENDEREYE_IPC_PORT` | `37020` | Service port |
+| `RENDEREYE_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 
 Notes:
 
-- **Changes take effect when the shared service restarts.** Run
-  `rendereye-mcp service stop`, then restart your agent.
+- **Changes take effect when the service restarts.** Kill the `rendereye-mcp service`
+  process and restart your agent to pick up the new port.
 - **Changing the port:** the RenderDoc extension does not read `.env`; it reads
   `RENDEREYE_IPC_PORT` from RenderDoc's own environment. If you change the port, set it
   as a user environment variable as well so RenderDoc inherits it, then restart RenderDoc.
-- `RENDEREYE_CAPTURE_DIRS` is only needed for the capture-registry tools
-  (`capture_list`, `capture_latest`, …). Inspecting the capture open in RenderDoc does not
-  use it.

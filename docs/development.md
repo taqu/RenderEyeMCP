@@ -1,161 +1,171 @@
 # Development Guide
 
-This guide covers the developer workflow using `uv`.
-For end-user installation (including without `uv`), see [Installation](en/installation.md).
+This guide covers the developer workflow for the Go implementation.
+For end-user installation, see [Installation](en/installation.md).
 
 ## Prerequisites
 
-- Python 3.11+ in PATH
-- [uv](https://docs.astral.sh/uv/) 0.9.26+
-- RenderDoc installed (auto-detected from `C:\Program Files\RenderDoc\` or set `RENDEREYE_RENDERDOC_EXE`)
+- **Go 1.22+** in PATH
+- **RenderDoc 1.46+** installed (for manual extension testing)
+- `uv` — only needed for RenderDoc extension development (`uv sync`, `uv run pytest`)
 
-## Setup
-
-```bash
-# Clone the repo
-git clone https://github.com/taqu/RenderEyeMCP.git
-cd RenderEyeMCP
-
-# Create venv and install all dependencies (including dev)
-uv sync
-
-# Verify the MCP server works
-uv run python -m rendereye_mcp
-```
-
-## Project Structure
+## Repository structure
 
 ```
-src/rendereye_mcp/
-    __init__.py          version string
-    __main__.py          entry point (python -m rendereye_mcp)
-    server.py            MCPServer + all MCP tools
-    config.py            Config dataclass + RENDEREYE_* env overrides (incl. CaptureConfig)
-    logging_setup.py     stderr logging configuration
+cmd/rendereye-mcp/
+    main.go              entry point; subcommand dispatch (default→bridge, service, version, help)
 
-    ipc/
-        __init__.py
-        protocol.py      message dataclasses + serialize/deserialize
-        transport.py     asyncio TCP server
-        connection.py    per-client handler
+internal/
+    bridge/
+        autostart.go     launch "rendereye-mcp service" detached; wait for ready
+        sysattr_windows.go   CREATE_NEW_PROCESS_GROUP (detach on Windows)
+        sysattr_unix.go      Setsid: true (detach on Linux/macOS)
+        client.go        TCP client that connects to IPC service
+        mcp.go           MCP stdio transport; 58 tool handlers
+    server/
+        server.go        IPC service; TCP listener; connection accept loop
+        connhandler.go   per-connection read/write; heartbeat; gui-state handlers
+        router.go        pending-call map; request routing; timeout loop
+        router_test.go   unit tests for router (goroutine lifecycle, routing, isolation)
+        integration_test.go  full-stack IPC integration tests
+    lifecycle/
+        lock.go          per-machine advisory lock (prevents duplicate service)
+    version/
+        version.go       ldflags-injectable Version / GitCommit / BuildDate
 
-    platform/
-        __init__.py
-        windows.py       RenderDoc exe/process discovery
-
-    captures/
-        __init__.py      exports CaptureRegistry, CaptureStorage, CaptureRecord, CaptureStatus
-        models.py        CaptureRecord dataclass + CaptureStatus enum
-        discovery.py     scan_directory() — yields .rdc paths
-        readiness.py     check_readiness() — async stability check
-        storage.py       CaptureStorage — SQLite backend with threading.Lock
-        registry.py      CaptureRegistry — coordinator (scan, watch, reconcile)
-        watcher.py       CaptureWatcher — watchdog filesystem events
-
-extensions/rendereye/    (Python 3.6 stdlib only — for RenderDoc)
+extensions/rendereye/    (Python 3.8 stdlib only — for RenderDoc's embedded Python)
     __init__.py          register(version, pyrenderdoc) / unregister() entry points
     ipc_client.py        background-thread TCP client
     extension.json       RenderDoc extension metadata
 
-tests/
-    test_config.py       Config defaults, env overrides, validation
-    test_protocol.py     IPC message serialize/deserialize round-trips
-    test_ipc.py          asyncio IPC server integration tests
-    test_server.py       MCPServer creation + server_status tool
-    captures/
-        test_discovery.py   scan_directory() — filesystem scanning
-        test_readiness.py   check_readiness() — async stability
-        test_storage.py     CaptureStorage — SQLite CRUD
-        test_registry.py    CaptureRegistry — integration
-        test_mcp_tools.py   MCP tool logic (capture_list, etc.)
+tests/                   Python tests for the RenderDoc extension only
+scripts/
+    install.ps1          Windows installer
+    install.sh           Linux/macOS installer
+.github/workflows/
+    release-go.yml       cross-platform release build matrix
 ```
 
-## Common Commands
-
-### Run the server
+## Build
 
 ```bash
-# stdio transport (for MCP client connection)
-uv run rendereye-mcp
-# or
-uv run python -m rendereye_mcp
+# Development build
+go build ./cmd/rendereye-mcp/
+
+# Release build with version metadata
+go build -ldflags "-X github.com/taqu/RenderEyeMCP/internal/version.Version=1.0.0 \
+  -X github.com/taqu/RenderEyeMCP/internal/version.GitCommit=$(git rev-parse --short HEAD) \
+  -X github.com/taqu/RenderEyeMCP/internal/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  ./cmd/rendereye-mcp/
 ```
 
-### Run tests
+## Tests
 
 ```bash
-uv run pytest tests/ -v
+# All Go tests
+go test ./...
+
+# Verbose
+go test -v ./...
+
+# Race detector
+go test -race ./...
+
+# Go vet
+go vet ./...
 ```
 
-### Lint
+## Run the MCP Bridge (for debugging)
 
 ```bash
-uv run ruff check src/ extensions/ tests/
-uv run ruff check src/ extensions/ tests/ --fix   # auto-fix
+# Start MCP Bridge on stdio (this is what the agent starts)
+./rendereye-mcp
+
+# Start the IPC service in the foreground (for debugging)
+./rendereye-mcp service
+
+# Version
+./rendereye-mcp version
 ```
 
-### Environment variable overrides
+Set `RENDEREYE_LOG_LEVEL=debug` for verbose output. Bridge and service logs go to stderr.
+stdout is reserved for MCP JSON-RPC traffic.
 
-```bash
-RENDEREYE_IPC_PORT=37021 uv run python -m rendereye_mcp
-RENDEREYE_LOG_LEVEL=DEBUG uv run python -m rendereye_mcp
-RENDEREYE_RENDERDOC_EXE=C:/Tools/RenderDoc/qrenderdoc.exe uv run python -m rendereye_mcp
+## Environment variables
 
-# Phase 1: Configure capture directories
-RENDEREYE_CAPTURE_DIRS="C:/RenderDocCaptures" uv run python -m rendereye_mcp
-RENDEREYE_CAPTURE_DIRS="C:/dir1;C:/dir2" uv run python -m rendereye_mcp   # ";" on Windows, ":" on Linux
-RENDEREYE_CAPTURE_STABILITY_SECONDS=1.0 uv run python -m rendereye_mcp
-```
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `RENDEREYE_IPC_HOST` | `127.0.0.1` | IPC service bind/connect address |
+| `RENDEREYE_IPC_PORT` | `37020` | IPC service port |
+| `RENDEREYE_LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
 
-## Installing the RenderDoc Extension
+Variables are loaded from a `.env` file in the same directory as the executable, then
+overridden by actual environment variables.
 
-1. Build/copy the extension to RenderDoc's extension directory:
+## Installing the RenderDoc extension (for development)
 
 ```powershell
+# Windows — copy to RenderDoc user extensions folder
 $dest = "$env:APPDATA\qrenderdoc\extensions\rendereye"
 New-Item -ItemType Directory -Force -Path $dest
 Copy-Item -Recurse extensions\rendereye\* $dest
 ```
 
-2. Open RenderDoc → Tools → Manage Extensions → select "RenderEyeMCP" → Load, and tick
-   Always Load. (`uv run rendereye-mcp setup` does step 1 for you.)
+```bash
+# Linux
+mkdir -p ~/.local/share/renderdoc/plugins/rendereye
+cp -r extensions/rendereye/. ~/.local/share/renderdoc/plugins/rendereye/
+```
 
-3. Start the shared service (or let an agent start it via `rendereye-mcp serve`). The
-   extension reconnects automatically, so start order does not matter:
-   ```bash
-   uv run rendereye-mcp service run
-   ```
+Then enable in RenderDoc → **Tools → Manage Extensions** → *Always Load*.
 
-4. After changing extension code, keep `extensions/rendereye/` and
-   `src/rendereye_mcp/_extension_data/` identical (tests enforce this), re-copy, and
-   restart RenderDoc.
+After changing extension code, re-copy and restart RenderDoc.
 
-## Debugging
+## RenderDoc extension development (Python)
 
-- All logs from `rendereye_mcp.*` go to **stderr**.
-- MCP protocol JSON-RPC messages go to **stdout**.
-- Set `RENDEREYE_LOG_LEVEL=DEBUG` for verbose output.
-- The extension logs to stderr from within RenderDoc (check RenderDoc's log console).
+The extension uses RenderDoc's embedded Python (3.8 in RenderDoc 1.46) and stdlib only.
 
-## Dependency Notes
+```bash
+# Install Python dev dependencies
+uv sync
 
-| Package | Version | Purpose |
-|---------|---------|---------|
-| mcp[cli] | 2.3.0 | MCP SDK — `MCPServer` (was `FastMCP` in 1.x) |
-| psutil | 7.2.2 | Process enumeration for RenderDoc detection |
-| watchdog | 6.0.0 | Filesystem event monitoring (Phase 1) |
-| pytest | 9.1.1 | Test runner |
-| pytest-asyncio | 1.4.0 | Async test support |
-| ruff | 0.17.2 | Linter |
+# Run extension unit tests
+uv run pytest tests/ -v
+```
 
-> **Note:** The extension (`extensions/rendereye/`) uses **stdlib only** and must remain
-> Python 3.6 compatible. Do not import any third-party package from within the extension.
+Do not import any third-party package from within the extension. Keep it compatible with
+Python 3.8.
 
-## RenderDoc API compliance
+## Cross-platform builds
 
-Use the context supplied by `register(version, pyrenderdoc)`. Dispatch all GUI
-work through MiniQt, including initial sampling. Keep wheel `_extension_data`
-resources byte-identical to `extensions/rendereye` (renaming the entry point).
-The regression suite checks parity. See [integration](renderdoc_integration.md)
-and [compatibility](renderdoc_api_compatibility.md). Real GUI validation is required
-before declaring the extension fully verified; mocks alone are insufficient.
+The release workflow (`.github/workflows/release-go.yml`) builds for:
+
+| OS | Architecture | Archive |
+|----|-------------|---------|
+| Windows | amd64 | `.zip` |
+| Windows | arm64 | `.zip` |
+| Linux | amd64 | `.tar.gz` |
+| Linux | arm64 | `.tar.gz` |
+| macOS | arm64 | `.tar.gz` |
+
+Each archive contains: binary + `extension/` + installer script + README + LICENSE.
+
+To replicate a release build locally:
+
+```bash
+GOOS=linux GOARCH=amd64 go build -o rendereye-mcp ./cmd/rendereye-mcp/
+GOOS=windows GOARCH=amd64 go build -o rendereye-mcp.exe ./cmd/rendereye-mcp/
+```
+
+## Debugging the IPC protocol
+
+Run the service in the foreground (`./rendereye-mcp service`) with
+`RENDEREYE_LOG_LEVEL=debug` to see all connection events, message routing, and timeouts
+on stderr. The bridge also logs at debug level when `RENDEREYE_LOG_LEVEL=debug` is set.
+
+## RenderDoc API compliance notes
+
+The extension dispatches all GUI work through
+`Extensions().GetMiniQtHelper().InvokeOntoUIThread`. Never call `CaptureContext` methods
+directly from the IPC worker thread. See [IPC protocol](ipc_protocol.md) and
+[RenderDoc integration](renderdoc_integration.md) for details.

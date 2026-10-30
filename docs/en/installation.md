@@ -2,11 +2,12 @@
 
 # Install RenderEyeMCP
 
-This page installs RenderEyeMCP, the RenderDoc extension and the configuration file.
-Connecting a coding agent is covered in [Configuration](configuration.md).
+This page installs the `rendereye-mcp` binary, the RenderDoc extension, and the
+configuration file. Connecting a coding agent is covered in
+[Configuration](configuration.md).
 
 - [What gets installed](#what-gets-installed)
-- [Prerequisites](#prerequisites)
+- [Requirements](#requirements)
 - [Install on Windows](#install-on-windows)
 - [Install on Linux](#install-on-linux)
 - [Enable the RenderDoc extension](#enable-the-renderdoc-extension)
@@ -17,110 +18,126 @@ Connecting a coding agent is covered in [Configuration](configuration.md).
 
 ## What gets installed
 
-| Piece | Where | Created by |
-|-------|-------|-----------|
-| `rendereye-mcp` command (MCP server, shared service, setup tools) | Your Python tool environment | `uv tool install` or `pip` |
-| Configuration file `.env` | Windows: `%LOCALAPPDATA%\RenderEyeMCP\.env`<br>Linux: `$XDG_CONFIG_HOME/rendereye_mcp/.env` (default `~/.config/rendereye_mcp/.env`) | `rendereye-mcp setup` |
-| RenderDoc extension `rendereye` | Windows: `%APPDATA%\qrenderdoc\extensions\rendereye\`<br>Linux: `$XDG_DATA_HOME/qrenderdoc/extensions/rendereye/` (default `~/.local/share/...`) | `rendereye-mcp setup` |
-| `RENDEREYE_ENV_FILE` user environment variable (points to `.env`) | Windows: user environment (registry)<br>Linux: you add it to your shell profile | `rendereye-mcp setup` (Windows) |
+| Piece | Where |
+|-------|-------|
+| `rendereye-mcp.exe` (MCP Bridge + IPC Service) | Windows: `%LOCALAPPDATA%\RenderEyeMCP\`<br>Linux: `~/.local/bin/` |
+| RenderDoc extension `rendereye/` | Auto-detected RenderDoc plugins folder |
+| Configuration file `.env` | Same folder as the executable |
 
 Nothing is installed into RenderDoc's own directory, and RenderDoc itself is not bundled.
 
-## Prerequisites
+## Requirements
 
-- **RenderDoc 1.46** installed. The extension declares 1.46 as its minimum version.
-- **Python 3.11 or later**. With `uv` you do not need to install Python yourself.
-- **[uv](https://docs.astral.sh/uv/)** (recommended), or plain `python -m venv` + `pip`.
-- Git, only if you install from a source checkout.
-
-> **Release status:** no public release has been published yet. The commands below use
-> either a source checkout or a wheel file (`rendereye_mcp-<version>-py3-none-any.whl`).
-> When a release is published, its ZIP contains the wheel in `python/`.
+- **RenderDoc 1.46** or later. The extension declares 1.46 as its minimum version.
+- An MCP-capable coding agent: **Claude Code** or **Codex**.
+- No Python, pip, uv, or Go toolchain required.
 
 ## Install on Windows
 
-### Option A — uv (recommended)
+### Step 1 — Download the release archive
+
+Download `rendereye-mcp_<version>_windows_amd64.zip` from the
+[GitHub Releases](https://github.com/taqu/RenderEyeMCP/releases) page and extract it.
+
+### Step 2 — Run the installer
+
+Open PowerShell in the extracted folder and run:
 
 ```powershell
-# Install uv if needed, then open a new terminal
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-
-# From a source checkout
-git clone https://github.com/taqu/RenderEyeMCP.git
-cd RenderEyeMCP
-uv tool install .
-
-# ...or from a wheel file
-uv tool install .\rendereye_mcp-1.0.0-py3-none-any.whl
+.\install.ps1
 ```
 
-If `rendereye-mcp` is not found afterwards, run `uv tool update-shell` and open a new
-terminal. Check it with:
+The installer:
+
+1. Copies `rendereye-mcp.exe` to `%LOCALAPPDATA%\RenderEyeMCP\`.
+2. Auto-detects the RenderDoc plugins folder and copies the `extension/` files there.
+3. Creates a default `.env` in `%LOCALAPPDATA%\RenderEyeMCP\` (not overwritten on
+   subsequent runs).
+4. Prints the MCP configuration snippet to use in your agent's config.
+
+**RenderDoc not detected?** Pass the path explicitly:
 
 ```powershell
-rendereye-mcp --version
+.\install.ps1 -RenderDocExtDir "C:\Program Files\RenderDoc\plugins"
 ```
 
-### Option B — pip in a virtual environment (no uv)
+**Updating?** Re-run with `-Force` to overwrite the existing binary:
 
 ```powershell
-$installDir = "$env:LOCALAPPDATA\RenderEyeMCP"
-py -3.11 -m venv "$installDir\venv"      # any Python 3.11+ works; plain `python` is fine too
-& "$installDir\venv\Scripts\python.exe" -m pip install .\rendereye_mcp-1.0.0-py3-none-any.whl
-& "$installDir\venv\Scripts\rendereye-mcp.exe" --version
+.\install.ps1 -Force
 ```
 
-In the following steps, replace `rendereye-mcp` with
-`& "$env:LOCALAPPDATA\RenderEyeMCP\venv\Scripts\rendereye-mcp.exe"`.
-
-### Run setup
+**Manual installation** (without the installer):
 
 ```powershell
-rendereye-mcp setup
+$dest = "$env:LOCALAPPDATA\RenderEyeMCP"
+New-Item -ItemType Directory -Force -Path $dest
+Copy-Item rendereye-mcp.exe $dest
+# copy extension to your RenderDoc plugins\rendereye directory
+Copy-Item -Recurse extension\ "$env:APPDATA\qrenderdoc\extensions\rendereye"
 ```
 
-`setup` does four things:
+### Step 3 — Verify the binary
 
-1. Creates `%LOCALAPPDATA%\RenderEyeMCP\.env` from the bundled template. **An existing
-   `.env` is never overwritten**; setup prints `Existing .env preserved`.
-2. Looks for RenderDoc at `%ProgramFiles%\RenderDoc\qrenderdoc.exe` and
-   `%ProgramFiles(x86)%\RenderDoc\qrenderdoc.exe` and writes the path to
-   `RENDEREYE_RENDERDOC_EXE`. A value you already set is kept.
-3. Copies the RenderDoc extension to `%APPDATA%\qrenderdoc\extensions\rendereye\`
-   (re-running setup updates it).
-4. Registers `RENDEREYE_ENV_FILE` as a user environment variable.
-
-**RenderDoc in a custom location?** If setup prints `RenderDoc not found`, edit the
-`.env` file and set the full path, for example:
-
-```dotenv
-RENDEREYE_RENDERDOC_EXE=D:\Tools\RenderDoc\qrenderdoc.exe
+```powershell
+& "$env:LOCALAPPDATA\RenderEyeMCP\rendereye-mcp.exe" version
 ```
 
-This path is only used by `server_status`/`doctor` checks and by the optional
-`capture_open` tool. Inspecting a capture you opened yourself does not need it.
+Expected output: `rendereye-mcp v<version> ...`
 
-**Open a new terminal** (and restart any running coding agent or IDE) so that
-`RENDEREYE_ENV_FILE` is visible. Then continue with
-[Enable the RenderDoc extension](#enable-the-renderdoc-extension).
+Continue with [Enable the RenderDoc extension](#enable-the-renderdoc-extension).
 
 ## Install on Linux
 
-Linux is not validated with a live RenderDoc yet; the steps below follow the implemented
-code paths.
+### Step 1 — Download the release archive
+
+Download `rendereye-mcp_<version>_linux_amd64.tar.gz` from the
+[GitHub Releases](https://github.com/taqu/RenderEyeMCP/releases) page and extract it:
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh     # if needed
-git clone https://github.com/taqu/RenderEyeMCP.git
-cd RenderEyeMCP
-uv tool install .
-rendereye-mcp setup
+tar -xzf rendereye-mcp_<version>_linux_amd64.tar.gz
+cd rendereye-mcp_<version>_linux_amd64
 ```
 
-`setup` detects `qrenderdoc` in `/usr/bin`, `/usr/local/bin` or `~/.local/bin`, installs
-the extension under `~/.local/share/qrenderdoc/extensions/rendereye/`, and prints an
-`export RENDEREYE_ENV_FILE=...` line. Add that line to your shell profile, then open a new
-terminal and restart your agent.
+### Step 2 — Run the installer
+
+```bash
+./install.sh
+```
+
+The installer copies `rendereye-mcp` to `~/.local/bin/` (or `--install-dir DIR`),
+auto-detects the RenderDoc plugins folder, copies the extension, and creates a default
+`.env` next to the binary.
+
+**RenderDoc not detected?**
+
+```bash
+./install.sh --renderdoc-ext-dir ~/.local/share/renderdoc/plugins
+```
+
+**Updating?**
+
+```bash
+./install.sh --force
+```
+
+### Step 3 — Add `~/.local/bin` to PATH (if needed)
+
+If the installer warns that `~/.local/bin` is not in `$PATH`, add this to your shell
+profile (`~/.bashrc` or `~/.zshrc`):
+
+```bash
+export PATH="$PATH:$HOME/.local/bin"
+```
+
+Then open a new terminal and verify:
+
+```bash
+rendereye-mcp version
+```
+
+Linux RenderDoc integration has not been validated live; the installer follows the
+implemented code paths.
 
 ## Enable the RenderDoc extension
 
@@ -128,89 +145,86 @@ RenderDoc does not load user extensions until you enable them once:
 
 1. Start RenderDoc.
 2. Open **Tools → Manage Extensions**.
-3. Select **RenderEyeMCP** in the list, click **Load**, and tick **Always Load**.
+3. Select **RenderEyeMCP** in the list and enable **Always Load**.
 
-With *Always Load* set, the extension starts with every RenderDoc window, including
-windows opened by Unity or Unreal Engine.
+With *Always Load* set, the extension starts with every RenderDoc window.
 
-The extension connects to the RenderEyeMCP shared service on `127.0.0.1:37020`. The
-service is started automatically by the first coding agent that launches
-`rendereye-mcp serve`. If RenderDoc starts first, the extension retries in the background
-(back-off up to 30 seconds), so the order does not matter.
+The extension connects to the IPC service on `127.0.0.1:37020`. The service is started
+automatically by the MCP Bridge when your coding agent launches `rendereye-mcp`. If
+RenderDoc starts first, the extension retries in the background (back-off up to 30
+seconds), so start order does not matter.
 
 ## Verify the installation
 
-Work through these in order. Each step checks something the previous one does not.
+Work through these in order:
 
-1. **Installation and configuration**
+1. **Binary works**
 
    ```powershell
-   rendereye-mcp doctor
+   & "$env:LOCALAPPDATA\RenderEyeMCP\rendereye-mcp.exe" version
    ```
 
-   Expect `[✓]` for Version, Executable, `.env` file, `RENDEREYE_ENV_FILE`, RenderDoc
-   executable and RenderDoc extension. A warning for *Shared service* is normal when no
-   agent is running.
+   Expect a version line such as `rendereye-mcp v1.0.0 ...`
 
 2. **MCP server starts and the agent sees the tools** — follow
    [Configuration → Verify](configuration.md#verify-the-connection). For example,
    `claude mcp get rendereye` should report `Connected`.
 
-3. **Shared service is running** — after the agent has started:
-
-   ```powershell
-   rendereye-mcp service status
-   ```
-
-   Expect `Service: running` and `Listening: 127.0.0.1:37020`.
-
-4. **RenderDoc is discovered** — start RenderDoc (extension enabled) and ask the agent:
+3. **RenderDoc is discovered** — start RenderDoc (extension enabled) and ask the agent:
 
    > List the RenderDoc sessions RenderEyeMCP can see.
 
    The answer should include a session with `connection_state: connected`.
 
-5. **An already-loaded capture can be inspected** — open an `.rdc` file, select a draw
+4. **An already-loaded capture can be inspected** — open an `.rdc` file, select a draw
    call, and ask:
 
    > What capture is open in RenderDoc, and which event is selected?
 
-A process that merely starts is not proof that everything is connected; step 4 is the
-first point where the extension, the service and the MCP server are all involved.
+A process that merely starts is not proof that everything is connected; step 3 is the
+first point where the extension, the service, and the MCP bridge are all involved.
 
 ## Update
 
-```powershell
-cd RenderEyeMCP; git pull; uv tool install --force .   # source checkout
-uv tool install --force .\rendereye_mcp-<new>-py3-none-any.whl   # wheel
-rendereye-mcp service stop     # restart the shared service on the new version
-rendereye-mcp setup            # refreshes the RenderDoc extension; keeps your .env
-```
+1. Download the new release archive and extract it.
+2. Stop any running IPC service or coding agent sessions.
+3. Re-run the installer with `-Force`:
 
-Restart RenderDoc so it loads the updated extension, and restart your coding agent.
+   ```powershell
+   .\install.ps1 -Force
+   ```
+
+4. Restart RenderDoc to load the updated extension.
+5. Restart your coding agent.
+
 Agent configuration files do not need changes as long as the executable path is the same.
 
 ## Uninstall
 
+**Windows:**
+
 ```powershell
-rendereye-mcp setup-agent claude-code --remove   # repeat per agent you configured
-rendereye-mcp service stop
-rendereye-mcp uninstall-setup                    # removes the extension and RENDEREYE_ENV_FILE
-uv tool uninstall rendereye-mcp                  # or delete the venv directory
+# Remove the executable and .env
+Remove-Item -Recurse "$env:LOCALAPPDATA\RenderEyeMCP"
+
+# Remove the RenderDoc extension (path may vary)
+Remove-Item -Recurse "$env:APPDATA\qrenderdoc\extensions\rendereye"
 ```
 
-`uninstall-setup` keeps `%LOCALAPPDATA%\RenderEyeMCP\` (your `.env`) and the database
-under `%APPDATA%\rendereye_mcp\`. Delete those folders manually to remove everything.
+**Linux:**
+
+```bash
+rm -f ~/.local/bin/rendereye-mcp ~/.local/bin/.env
+rm -rf ~/.local/share/renderdoc/plugins/rendereye
+```
 
 ## What was tested
 
 | Method | Environment | Result |
 |--------|-------------|--------|
-| `uv tool install .` (source) | Windows 11, uv 0.12, isolated tool dir | Pass |
-| `uv tool install <wheel>` | Windows 11, wheel built with `uv build` | Pass |
-| `pip install <wheel>` in a fresh venv | Windows 11, Python 3.12.6, no uv | Pass |
-| `rendereye-mcp setup` (twice) | Windows 11, isolated `%LOCALAPPDATA%`/`%APPDATA%`; registry write stubbed | Pass: `.env` created then preserved, RenderDoc detected, 6 extension files installed |
-| `uv tool install --force .` (update), `uninstall-setup` | Windows 11, isolated directories | Pass: extension removed, `.env` kept |
-| `pip install <wheel>` in a clean venv | CI: Windows and Ubuntu, Python 3.11/3.12 | Runs in CI |
-| Clean Windows machine / VM | — | **Not performed.** Tests ran on a development machine with isolated directories |
+| `install.ps1` | Windows 11, extracted release archive | Pass |
+| `install.ps1 -Force` | Windows 11, re-run over existing installation | Pass |
+| Manual copy | Windows 11 | Pass |
+| `install.sh` | — | Code path validated; live RenderDoc not tested |
+| Clean Windows machine / VM | — | **Not performed** |
 | Linux end-to-end with RenderDoc | — | **Not performed** |
