@@ -1,0 +1,9 @@
+{
+  "category": "responses",
+  "description": "HeartbeatAckMessage server acknowledgement of HeartbeatMessage",
+  "wire": "{\"request_id\":\"44444444-0000-0000-0000-000000000001\",\"type\":\"heartbeat_ack\"}\n",
+  "fields": {
+    "request_id": "44444444-0000-0000-0000-000000000001",
+    "type": "heartbeat_ack"
+  }
+}

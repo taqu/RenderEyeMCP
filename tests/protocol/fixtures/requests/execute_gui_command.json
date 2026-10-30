@@ -1,0 +1,11 @@
+{
+  "category": "requests",
+  "description": "ExecuteGuiCommandMessage server requests extension to execute a GUI command",
+  "wire": "{\"request_id\":\"77777777-0000-0000-0000-000000000001\",\"command\":\"open_capture\",\"params\":{\"path\":\"/captures/test.rdc\"},\"type\":\"execute_gui_command\"}\n",
+  "fields": {
+    "request_id": "77777777-0000-0000-0000-000000000001",
+    "command": "open_capture",
+    "params": {"path": "/captures/test.rdc"},
+    "type": "execute_gui_command"
+  }
+}

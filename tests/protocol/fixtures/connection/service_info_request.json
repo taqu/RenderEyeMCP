@@ -1,0 +1,10 @@
+{
+  "category": "connection",
+  "description": "ServiceInfoRequestMessage bridge probes service identity before registration",
+  "wire": "{\"request_id\":\"22222222-0000-0000-0000-000000000001\",\"client_type\":\"mcp_bridge\",\"type\":\"service_info_request\"}\n",
+  "fields": {
+    "request_id": "22222222-0000-0000-0000-000000000001",
+    "client_type": "mcp_bridge",
+    "type": "service_info_request"
+  }
+}

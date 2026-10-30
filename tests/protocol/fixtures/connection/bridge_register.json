@@ -1,0 +1,14 @@
+{
+  "category": "connection",
+  "description": "BridgeRegisterMessage MCP bridge authenticates with shared service",
+  "wire": "{\"request_id\":\"eeeeeeee-0000-0000-0000-000000000001\",\"bridge_id\":\"ffffffff-0000-0000-0000-000000000001\",\"process_id\":99999,\"bridge_version\":\"1.0.0\",\"auth_token\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"type\":\"bridge_register\",\"protocol_version\":1}\n",
+  "fields": {
+    "request_id": "eeeeeeee-0000-0000-0000-000000000001",
+    "bridge_id": "ffffffff-0000-0000-0000-000000000001",
+    "process_id": 99999,
+    "bridge_version": "1.0.0",
+    "auth_token": "0000000000000000000000000000000000000000000000000000000000000000",
+    "type": "bridge_register",
+    "protocol_version": 1
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "category": "requests",
+  "description": "HeartbeatMessage periodic keep-alive sent by extension",
+  "wire": "{\"request_id\":\"44444444-0000-0000-0000-000000000001\",\"type\":\"heartbeat\"}\n",
+  "fields": {
+    "request_id": "44444444-0000-0000-0000-000000000001",
+    "type": "heartbeat"
+  }
+}

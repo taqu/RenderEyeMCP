@@ -1,0 +1,9 @@
+{
+  "category": "connection",
+  "description": "GoodbyeMessage sent before intentional disconnection with empty reason",
+  "wire": "{\"reason\":\"\",\"type\":\"goodbye\"}\n",
+  "fields": {
+    "reason": "",
+    "type": "goodbye"
+  }
+}

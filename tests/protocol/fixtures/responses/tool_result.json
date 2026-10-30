@@ -1,0 +1,12 @@
+{
+  "category": "responses",
+  "description": "ToolResultMessage service returns successful empty list result to bridge",
+  "wire": "{\"request_id\":\"88888888-0000-0000-0000-000000000001\",\"tool_name\":\"list_renderdoc_sessions\",\"result\":[],\"error\":\"\",\"type\":\"tool_result\"}\n",
+  "fields": {
+    "request_id": "88888888-0000-0000-0000-000000000001",
+    "tool_name": "list_renderdoc_sessions",
+    "result": [],
+    "error": "",
+    "type": "tool_result"
+  }
+}

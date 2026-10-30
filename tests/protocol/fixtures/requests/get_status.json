@@ -1,0 +1,9 @@
+{
+  "category": "requests",
+  "description": "GetStatusMessage request current extension and capture status",
+  "wire": "{\"request_id\":\"55555555-0000-0000-0000-000000000001\",\"type\":\"get_status\"}\n",
+  "fields": {
+    "request_id": "55555555-0000-0000-0000-000000000001",
+    "type": "get_status"
+  }
+}

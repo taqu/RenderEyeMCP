@@ -1,0 +1,11 @@
+{
+  "category": "connection",
+  "description": "ErrorMessage parse error response for invalid JSON input",
+  "wire": "{\"request_id\":\"\",\"code\":\"parse_error\",\"message\":\"Invalid JSON: ...\",\"type\":\"error\"}\n",
+  "fields": {
+    "request_id": "",
+    "code": "parse_error",
+    "message": "Invalid JSON: ...",
+    "type": "error"
+  }
+}

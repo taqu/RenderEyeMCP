@@ -1,0 +1,13 @@
+{
+  "category": "notifications",
+  "description": "GuiStateChangedMessage extension pushes GUI state change with capture loaded",
+  "wire": "{\"instance_id\":\"bbbbbbbb-0000-0000-0000-000000000001\",\"revision\":5,\"capture_loaded\":true,\"capture_path\":\"/captures/test.rdc\",\"capture_state\":\"loaded\",\"type\":\"gui_state_changed\"}\n",
+  "fields": {
+    "instance_id": "bbbbbbbb-0000-0000-0000-000000000001",
+    "revision": 5,
+    "capture_loaded": true,
+    "capture_path": "/captures/test.rdc",
+    "capture_state": "loaded",
+    "type": "gui_state_changed"
+  }
+}

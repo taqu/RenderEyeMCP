@@ -1,0 +1,13 @@
+{
+  "category": "connection",
+  "description": "HelloMessage sent by extension immediately after connecting",
+  "wire": "{\"request_id\":\"aaaaaaaa-0000-0000-0000-000000000001\",\"instance_id\":\"bbbbbbbb-0000-0000-0000-000000000001\",\"process_id\":12345,\"extension_version\":\"1.0.0\",\"type\":\"hello\",\"protocol_version\":1}\n",
+  "fields": {
+    "request_id": "aaaaaaaa-0000-0000-0000-000000000001",
+    "instance_id": "bbbbbbbb-0000-0000-0000-000000000001",
+    "process_id": 12345,
+    "extension_version": "1.0.0",
+    "type": "hello",
+    "protocol_version": 1
+  }
+}

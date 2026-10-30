@@ -1,0 +1,14 @@
+{
+  "category": "responses",
+  "description": "GuiStateResponseMessage extension responds to get_gui_state with full state snapshot",
+  "wire": "{\"request_id\":\"66666666-0000-0000-0000-000000000001\",\"instance_id\":\"bbbbbbbb-0000-0000-0000-000000000001\",\"revision\":5,\"capture_loaded\":true,\"capture_path\":\"/captures/test.rdc\",\"capture_state\":\"loaded\",\"type\":\"gui_state_response\"}\n",
+  "fields": {
+    "request_id": "66666666-0000-0000-0000-000000000001",
+    "instance_id": "bbbbbbbb-0000-0000-0000-000000000001",
+    "revision": 5,
+    "capture_loaded": true,
+    "capture_path": "/captures/test.rdc",
+    "capture_state": "loaded",
+    "type": "gui_state_response"
+  }
+}

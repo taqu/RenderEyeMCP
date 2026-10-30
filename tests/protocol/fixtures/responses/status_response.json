@@ -1,0 +1,14 @@
+{
+  "category": "responses",
+  "description": "StatusResponseMessage extension response with no capture loaded",
+  "wire": "{\"request_id\":\"55555555-0000-0000-0000-000000000001\",\"process_id\":12345,\"instance_id\":\"bbbbbbbb-0000-0000-0000-000000000001\",\"extension_version\":\"1.0.0\",\"capture_path\":null,\"connected\":true,\"type\":\"status_response\"}\n",
+  "fields": {
+    "request_id": "55555555-0000-0000-0000-000000000001",
+    "process_id": 12345,
+    "instance_id": "bbbbbbbb-0000-0000-0000-000000000001",
+    "extension_version": "1.0.0",
+    "capture_path": null,
+    "connected": true,
+    "type": "status_response"
+  }
+}

@@ -67,6 +67,25 @@ jobs:
           path: dist/
           retention-days: 7
 
+  go-probe:
+    name: Go Protocol Probe (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Build Go probe
+        run: go build ./tools/ipc-probe/...
+      - name: Run Go probe in mock mode
+        run: go run ./tools/ipc-probe/... -mock
+      - name: Run Go fixture check
+        run: go run ./tools/ipc-probe/... -fixtures tests/protocol/fixtures
+
   install-verify:
     name: Install Verify (${{ matrix.os }} / Python ${{ matrix.python-version }})
     needs: build-check

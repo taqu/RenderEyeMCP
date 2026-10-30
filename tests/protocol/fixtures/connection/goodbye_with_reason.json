@@ -1,0 +1,9 @@
+{
+  "category": "connection",
+  "description": "GoodbyeMessage with reason string indicating why the connection is closing",
+  "wire": "{\"reason\":\"extension_unregistered\",\"type\":\"goodbye\"}\n",
+  "fields": {
+    "reason": "extension_unregistered",
+    "type": "goodbye"
+  }
+}

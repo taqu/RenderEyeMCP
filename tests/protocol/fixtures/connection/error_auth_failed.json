@@ -1,0 +1,11 @@
+{
+  "category": "connection",
+  "description": "ErrorMessage authentication failure response",
+  "wire": "{\"request_id\":\"cccccccc-0000-0000-0000-000000000001\",\"code\":\"auth_failed\",\"message\":\"Bridge authentication failed.\",\"type\":\"error\"}\n",
+  "fields": {
+    "request_id": "cccccccc-0000-0000-0000-000000000001",
+    "code": "auth_failed",
+    "message": "Bridge authentication failed.",
+    "type": "error"
+  }
+}

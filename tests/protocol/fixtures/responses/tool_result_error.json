@@ -1,0 +1,12 @@
+{
+  "category": "responses",
+  "description": "ToolResultMessage service returns error result when no RenderDoc session is available",
+  "wire": "{\"request_id\":\"88888888-0000-0000-0000-000000000002\",\"tool_name\":\"list_renderdoc_sessions\",\"result\":null,\"error\":\"No RenderDoc session available.\",\"type\":\"tool_result\"}\n",
+  "fields": {
+    "request_id": "88888888-0000-0000-0000-000000000002",
+    "tool_name": "list_renderdoc_sessions",
+    "result": null,
+    "error": "No RenderDoc session available.",
+    "type": "tool_result"
+  }
+}
