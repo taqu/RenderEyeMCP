@@ -46,7 +46,7 @@ RenderDocを更新してください。
 2. コマンドを直接実行してエラーを確認します。
 
    ```powershell
-   & "$env:LOCALAPPDATA\RenderEyeMCP\rendereye-mcp.exe" version
+   .\rendereye-mcp.exe version
    ```
 
 3. Claude Codeでは`claude --debug`でサーバーのstderrを確認できます。Codexはそのログを

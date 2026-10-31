@@ -80,27 +80,32 @@ runtime. No separate Python installation is needed.
 
 1. Download `rendereye-mcp_<version>_windows_amd64.zip` from the
    [GitHub Releases](https://github.com/taqu/RenderEyeMCP/releases) page.
-2. Extract the archive.
-3. Run the installer (or copy files manually — see [Installation](docs/en/installation.md)):
+2. Extract the archive to a permanent directory (e.g. `C:\Tools\RenderEyeMCP`).
+3. Run the installer to install the RenderDoc Extension:
 
    ```powershell
    .\install.ps1
    ```
 
+   The installer prints the MCP configuration to use.
+
 4. In RenderDoc, open **Tools → Manage Extensions**, select **RenderEyeMCP**, and enable
    **Always Load**.
 
-5. Configure your coding agent. For Claude Code, add to `~/.claude.json`:
+5. Configure your coding agent using the path printed by the installer. For Claude Code,
+   add to `~/.claude.json`:
 
    ```json
    {
      "mcpServers": {
        "rendereye": {
-         "command": "C:\\Users\\<you>\\AppData\\Local\\RenderEyeMCP\\rendereye-mcp.exe"
+         "command": "C:\\Tools\\RenderEyeMCP\\rendereye-mcp.exe"
        }
      }
    }
    ```
+
+   Use the actual path where you extracted the archive.
 
 6. Restart the coding agent.
 

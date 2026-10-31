@@ -81,28 +81,32 @@ RenderDoc拡張機能はRenderDoc内蔵のPythonで動作します。ユーザ�
 
 1. [GitHub Releases](https://github.com/taqu/RenderEyeMCP/releases) から
    `rendereye-mcp_<version>_windows_amd64.zip` をダウンロードします。
-2. アーカイブを展開します。
-3. インストーラーを実行します(手動でのファイル配置については
-   [インストール](docs/ja/installation.md)を参照):
+2. アーカイブを永続的なフォルダー(例: `C:\Tools\RenderEyeMCP`)に展開します。
+3. インストーラーを実行してRenderDoc拡張機能をインストールします:
 
    ```powershell
    .\install.ps1
    ```
 
+   インストーラーが使用するMCP設定を表示します。
+
 4. RenderDocで **Tools → Manage Extensions** を開き、**RenderEyeMCP** を選んで
    **Always Load** を有効にします。
 
-5. コーディングエージェントを設定します。Claude Codeの場合、`~/.claude.json` に追加:
+5. インストーラーが表示したパスを使ってコーディングエージェントを設定します。
+   Claude Codeの場合、`~/.claude.json` に追加:
 
    ```json
    {
      "mcpServers": {
        "rendereye": {
-         "command": "C:\\Users\\<ユーザー名>\\AppData\\Local\\RenderEyeMCP\\rendereye-mcp.exe"
+         "command": "C:\\Tools\\RenderEyeMCP\\rendereye-mcp.exe"
        }
      }
    }
    ```
+
+   展開先のフォルダーの実際のパスを使ってください。
 
 6. コーディングエージェントを再起動します。
 

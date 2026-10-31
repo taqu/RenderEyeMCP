@@ -20,11 +20,16 @@
 
 | 要素 | 場所 |
 |------|------|
-| `rendereye-mcp.exe`(MCPブリッジ + IPCサービス) | Windows: `%LOCALAPPDATA%\RenderEyeMCP\`<br>Linux: `~/.local/bin/` |
-| RenderDoc拡張機能`rendereye/` | 自動検出したRenderDocプラグインフォルダー |
-| 設定ファイル`.env` | 実行ファイルと同じフォルダー |
+| `rendereye-mcp.exe`(MCPブリッジ + IPCサービス) | アーカイブを展開したフォルダーにそのまま残ります |
+| RenderDoc拡張機能`rendereye/` | Windows: `%APPDATA%\qrenderdoc\extensions\rendereye\`<br>Linux: `~/.local/share/qrenderdoc/extensions/rendereye/` |
+| 設定ファイル`.env` | アーカイブを展開したフォルダー(`rendereye-mcp.exe`と同じ場所) |
 
-RenderDoc本体のフォルダーには何もインストールしません。RenderDoc自体も同梱していません。
+実行ファイルは別の場所にコピー**しません**。展開したフォルダーはそのまま残しておき、
+コーディングエージェントのMCP設定から`rendereye-mcp.exe`を直接指定してください。
+展開したフォルダーを移動・削除する場合は、エージェントの設定も更新してください。
+
+RenderDoc本体のプログラムフォルダーには何もインストールしません。RenderDoc自体も
+同梱していません。
 
 ## 前提条件
 
@@ -49,19 +54,18 @@ RenderDoc本体のフォルダーには何もインストールしません。Re
 
 インストーラーは次の処理を行います。
 
-1. `rendereye-mcp.exe`を`%LOCALAPPDATA%\RenderEyeMCP\`にコピーします。
-2. RenderDocプラグインフォルダーを自動検出し、`extension/`のファイルをコピーします。
-3. `%LOCALAPPDATA%\RenderEyeMCP\`にデフォルトの`.env`を作成します(再実行時は上書き
-   しません)。
+1. 同じフォルダーに`rendereye-mcp.exe`があることを確認します。
+2. `extension/`のファイルを`%APPDATA%\qrenderdoc\extensions\rendereye\`にコピーします。
+3. 実行ファイルの隣にデフォルトの`.env`を作成します(再実行時は上書きしません)。
 4. エージェントの設定に使うMCP設定スニペットを表示します。
 
-**RenderDocが検出されない場合:** パスを直接指定します。
+**拡張機能フォルダーを指定する場合:** 直接指定します。
 
 ```powershell
-.\install.ps1 -RenderDocExtDir "C:\Program Files\RenderDoc\plugins"
+.\install.ps1 -RenderDocExtDir "C:\カスタムパス\extensions"
 ```
 
-**アップデート:** 既存バイナリを上書きするには`-Force`を付けます。
+**アップデート:** 既存の拡張機能を上書きするには`-Force`を付けます。
 
 ```powershell
 .\install.ps1 -Force
@@ -70,17 +74,15 @@ RenderDoc本体のフォルダーには何もインストールしません。Re
 **手動インストール**(インストーラーを使わない場合):
 
 ```powershell
-$dest = "$env:LOCALAPPDATA\RenderEyeMCP"
-New-Item -ItemType Directory -Force -Path $dest
-Copy-Item rendereye-mcp.exe $dest
-# 拡張機能をRenderDocのextensionsフォルダーにコピー
-Copy-Item -Recurse extension\ "$env:APPDATA\qrenderdoc\extensions\rendereye"
+$extDst = "$env:APPDATA\qrenderdoc\extensions\rendereye"
+New-Item -ItemType Directory -Force -Path $extDst
+Copy-Item -Recurse extension\* $extDst
 ```
 
 ### ステップ3 — バイナリの動作確認
 
 ```powershell
-& "$env:LOCALAPPDATA\RenderEyeMCP\rendereye-mcp.exe" version
+.\rendereye-mcp.exe version
 ```
 
 `rendereye-mcp v<version> ...`のようなバージョン行が表示されれば成功です。
@@ -105,14 +107,14 @@ cd rendereye-mcp_<version>_linux_amd64
 ./install.sh
 ```
 
-`rendereye-mcp`を`~/.local/bin/`(または`--install-dir DIR`)にコピーし、RenderDoc
-プラグインフォルダーを自動検出して拡張機能をコピーし、バイナリと同じ場所にデフォルトの
-`.env`を作成します。
+`rendereye-mcp`が同じフォルダーにあることを確認し、拡張機能を
+`~/.local/share/qrenderdoc/extensions/rendereye/`にコピーし、実行ファイルの隣に
+デフォルトの`.env`を作成します。
 
-**RenderDocが検出されない場合:**
+**拡張機能フォルダーを指定する場合:**
 
 ```bash
-./install.sh --renderdoc-ext-dir ~/.local/share/renderdoc/plugins
+./install.sh --renderdoc-ext-dir ~/.local/share/qrenderdoc/extensions
 ```
 
 **アップデート:**
@@ -121,19 +123,10 @@ cd rendereye-mcp_<version>_linux_amd64
 ./install.sh --force
 ```
 
-### ステップ3 — PATHへの追加(必要な場合)
-
-`~/.local/bin`が`$PATH`にない旨の警告が出た場合は、シェルのプロファイル(`~/.bashrc`
-または`~/.zshrc`)に以下を追加します。
+### ステップ3 — バイナリの動作確認
 
 ```bash
-export PATH="$PATH:$HOME/.local/bin"
-```
-
-新しいターミナルを開いて確認します。
-
-```bash
-rendereye-mcp version
+./rendereye-mcp version
 ```
 
 LinuxでのRenderDoc連携は実機検証をまだ行っていません。インストーラーは実装済みの
@@ -161,7 +154,7 @@ RenderDocが先に起動していても、拡張機能がバックグラウン�
 1. **バイナリが動作する**
 
    ```powershell
-   & "$env:LOCALAPPDATA\RenderEyeMCP\rendereye-mcp.exe" version
+   .\rendereye-mcp.exe version
    ```
 
    `rendereye-mcp v1.0.0 ...`のようなバージョン行が表示されればOKです。
@@ -187,37 +180,45 @@ RenderDocが先に起動していても、拡張機能がバックグラウン�
 
 ## アップデート
 
-1. 新しいリリースアーカイブをダウンロードして展開します。
+1. 新しいリリースアーカイブをダウンロードしてフォルダーに展開します。
 2. 実行中のIPCサービスやコーディングエージェントのセッションを停止します。
-3. `-Force`を付けてインストーラーを再実行します。
+3. `-Force`を付けてインストーラーを再実行して拡張機能を更新します。
 
    ```powershell
    .\install.ps1 -Force
    ```
 
-4. 更新した拡張機能を読み込ませるためRenderDocを再起動します。
-5. コーディングエージェントを再起動します。
+4. 別のフォルダーに展開した場合は、エージェントのMCP設定の`command`パスを更新します。
+5. 更新した拡張機能を読み込ませるためRenderDocを再起動します。
+6. コーディングエージェントを再起動します。
 
-実行ファイルのパスが変わらなければ、エージェントの設定ファイルを変更する必要はありません。
+同じフォルダーに展開した場合、エージェントの設定は変更する必要がありません。
 
 ## アンインストール
 
 **Windows:**
 
-```powershell
-# 実行ファイルと.envを削除
-Remove-Item -Recurse "$env:LOCALAPPDATA\RenderEyeMCP"
+1. RenderEyeMCPを使っているコーディングエージェントを停止し、IPCサービスが終了するのを
+   待ちます。
+2. エージェントのMCP設定からRenderEyeMCPのエントリを削除します。
+3. RenderDoc拡張機能を削除します。
 
-# RenderDoc拡張機能を削除(パスは環境によって異なる場合があります)
-Remove-Item -Recurse "$env:APPDATA\qrenderdoc\extensions\rendereye"
-```
+   ```powershell
+   Remove-Item -Recurse "$env:APPDATA\qrenderdoc\extensions\rendereye"
+   ```
+
+4. 展開したRenderEyeMCPフォルダー(`rendereye-mcp.exe`と`.env`が入っているフォルダー)を
+   削除します。
 
 **Linux:**
 
-```bash
-rm -f ~/.local/bin/rendereye-mcp ~/.local/bin/.env
-rm -rf ~/.local/share/renderdoc/plugins/rendereye
-```
+1. RenderDoc拡張機能を削除します。
+
+   ```bash
+   rm -rf ~/.local/share/qrenderdoc/extensions/rendereye
+   ```
+
+2. 展開したRenderEyeMCPフォルダーを削除します。
 
 ## テストした内容
 

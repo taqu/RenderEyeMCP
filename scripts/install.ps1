@@ -1,27 +1,25 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Installs RenderEyeMCP on Windows.
+    Installs the RenderEyeMCP RenderDoc Extension.
 
 .DESCRIPTION
-    Copies rendereye-mcp.exe to a target directory, installs the RenderDoc
-    Extension, and prints coding-agent configuration instructions.
+    Copies the RenderDoc Extension from the extracted release archive to the
+    per-user RenderDoc extension directory and prints coding-agent configuration
+    instructions.
 
-    Run from the extracted release archive directory.
-
-.PARAMETER InstallDir
-    Directory where rendereye-mcp.exe is placed.
-    Default: $env:LOCALAPPDATA\RenderEyeMCP
+    Run from the extracted release archive directory (where rendereye-mcp.exe lives).
+    The executable is NOT copied anywhere — configure your coding agent to point to it
+    directly in its current location.
 
 .PARAMETER RenderDocExtDir
-    RenderDoc Extension directory.
-    Default: auto-detected from common RenderDoc installation paths.
+    RenderDoc per-user extension directory.
+    Default: %APPDATA%\qrenderdoc\extensions
 
 .PARAMETER Force
-    Overwrite existing installation without prompting.
+    Overwrite an existing RenderDoc extension installation without prompting.
 #>
 param(
-    [string]$InstallDir = "$env:LOCALAPPDATA\RenderEyeMCP",
     [string]$RenderDocExtDir = "",
     [switch]$Force
 )
@@ -38,93 +36,91 @@ function Write-Fail($msg) { Write-Host "    FAIL $msg" -ForegroundColor Red }
 
 # ── Locate archive root ───────────────────────────────────────────────────────
 
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ScriptDir = $PSScriptRoot
 $ExeSrc    = Join-Path $ScriptDir "rendereye-mcp.exe"
-$ExtSrc    = Join-Path $ScriptDir "extension"
+$ExtSrc    = Join-Path $ScriptDir "extensions"
 
-if (-not (Test-Path $ExeSrc)) {
-    Write-Fail "rendereye-mcp.exe not found next to install.ps1 ($ScriptDir)"
+if (-not (Test-Path $ExeSrc -PathType Leaf)) {
+    Write-Fail "rendereye-mcp.exe not found in $ScriptDir"
+    Write-Fail "Run install.ps1 from the extracted release archive directory."
     exit 1
 }
 
-# ── Install executable ────────────────────────────────────────────────────────
+$ExePath = (Resolve-Path $ExeSrc).Path
 
-Write-Step "Installing rendereye-mcp.exe to $InstallDir"
+# ── Validate executable ───────────────────────────────────────────────────────
 
-if (-not (Test-Path $InstallDir)) {
-    New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+Write-Step "Verifying rendereye-mcp.exe"
+try {
+    $ver = & $ExePath version 2>&1 | Select-Object -First 1
+    Write-OK "Executable: $ver"
+} catch {
+    Write-Warn "Could not run version check: $_"
+    Write-Warn "Proceeding with extension installation."
 }
 
-$ExeDst = Join-Path $InstallDir "rendereye-mcp.exe"
-
-if ((Test-Path $ExeDst) -and -not $Force) {
-    $existing = & $ExeDst version 2>&1 | Select-Object -First 1
-    Write-Warn "Existing installation found: $existing"
-    $confirm = Read-Host "    Overwrite? [y/N]"
-    if ($confirm -notmatch '^[Yy]') {
-        Write-Host "    Skipped executable installation."
-    } else {
-        Copy-Item -Path $ExeSrc -Destination $ExeDst -Force
-        Write-OK "Copied rendereye-mcp.exe"
-    }
-} else {
-    Copy-Item -Path $ExeSrc -Destination $ExeDst -Force
-    Write-OK "Copied rendereye-mcp.exe"
-}
-
-# ── Locate RenderDoc Extension directory ─────────────────────────────────────
+# ── Resolve RenderDoc Extension directory ────────────────────────────────────
 
 Write-Step "Locating RenderDoc Extension directory"
 
-if ($RenderDocExtDir -eq "") {
-    $candidates = @(
-        "$env:ProgramFiles\RenderDoc\plugins\amd\renderdoc",
-        "$env:ProgramFiles\RenderDoc\plugins",
-        "$env:LOCALAPPDATA\RenderDoc\plugins"
-    )
-    foreach ($c in $candidates) {
-        if (Test-Path $c) {
-            $RenderDocExtDir = $c
-            break
-        }
-    }
+if ([string]::IsNullOrWhiteSpace($RenderDocExtDir)) {
+    $RenderDocExtDir = Join-Path $env:APPDATA "qrenderdoc\extensions"
 }
 
-if ($RenderDocExtDir -eq "") {
-    Write-Warn "Could not auto-detect RenderDoc Extension directory."
-    Write-Warn "Please set -RenderDocExtDir to your RenderDoc plugins folder."
-    Write-Warn "Extension files are in: $ExtSrc"
-    Write-Warn "Copy them manually to your RenderDoc plugins directory."
-} else {
-    Write-OK "RenderDoc Extension directory: $RenderDocExtDir"
-}
+Write-OK "Extension directory: $RenderDocExtDir"
 
 # ── Install Extension ─────────────────────────────────────────────────────────
 
-if ($RenderDocExtDir -ne "" -and (Test-Path $ExtSrc)) {
-    Write-Step "Installing RenderDoc Extension to $RenderDocExtDir"
+if (-not (Test-Path $ExtSrc -PathType Container)) {
+    Write-Fail "extension/ directory not found in $ScriptDir"
+    Write-Fail "The release archive may be incomplete."
+    exit 1
+}
 
-    $ExtDst = Join-Path $RenderDocExtDir "rendereye"
+Write-Step "Installing RenderDoc Extension"
+
+$ExtDst = Join-Path $RenderDocExtDir "rendereye"
+
+if ((Test-Path $ExtDst) -and -not $Force) {
+    Write-Warn "Existing extension found at $ExtDst"
+    $confirm = Read-Host "    Overwrite? [y/N]"
+    if ($confirm -notmatch '^[Yy]') {
+        Write-Host "    Skipped extension installation."
+    } else {
+        Remove-Item -Recurse -Force $ExtDst
+        $Force = $true
+    }
+}
+
+if (-not (Test-Path $ExtDst) -or $Force) {
+    if (-not (Test-Path $RenderDocExtDir)) {
+        New-Item -ItemType Directory -Path $RenderDocExtDir -Force | Out-Null
+    }
     if (-not (Test-Path $ExtDst)) {
         New-Item -ItemType Directory -Path $ExtDst -Force | Out-Null
     }
 
-    Get-ChildItem -Path $ExtSrc -Recurse | ForEach-Object {
+    Get-ChildItem -Path $ExtSrc -Recurse | Where-Object { $_.Name -ne "__pycache__" -and $_.FullName -notmatch "__pycache__" } | ForEach-Object {
         $rel = $_.FullName.Substring($ExtSrc.Length).TrimStart('\', '/')
         $dst = Join-Path $ExtDst $rel
         if ($_.PSIsContainer) {
             New-Item -ItemType Directory -Path $dst -Force | Out-Null
         } else {
+            $dstDir = Split-Path $dst -Parent
+            if (-not (Test-Path $dstDir)) {
+                New-Item -ItemType Directory -Path $dstDir -Force | Out-Null
+            }
             Copy-Item -Path $_.FullName -Destination $dst -Force
         }
     }
     Write-OK "Extension installed to $ExtDst"
-    Write-Warn "Restart RenderDoc for the extension to take effect."
+    Write-Warn "Restart RenderDoc, then enable the extension:"
+    Write-Warn "  Tools -> Manage Extensions -> RenderEyeMCP -> Always Load"
 }
 
-# ── Copy .env template if not present ────────────────────────────────────────
+# ── Create default .env if not present ───────────────────────────────────────
 
-$EnvDst = Join-Path $InstallDir ".env"
+$EnvDst = Join-Path $ScriptDir ".env"
 if (-not (Test-Path $EnvDst)) {
     Set-Content -Path $EnvDst -Value @"
 # RenderEyeMCP configuration
@@ -133,27 +129,37 @@ if (-not (Test-Path $EnvDst)) {
 #RENDEREYE_IPC_PORT=37020
 #RENDEREYE_LOG_LEVEL=info
 "@
-    Write-OK "Created default .env in $InstallDir"
+    Write-OK "Created default .env in $ScriptDir"
 }
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 
+# Escape backslashes for JSON
+$ExeJson = $ExePath -replace '\\', '\\'
+
 Write-Host ""
 Write-Host "Installation complete." -ForegroundColor Green
 Write-Host ""
-Write-Host "Executable : $ExeDst"
+Write-Host "Executable : $ExePath"
+Write-Host ""
+Write-Host "Keep the extracted directory in place — your coding agent runs the"
+Write-Host "executable directly from $ScriptDir"
 Write-Host ""
 Write-Host "Claude Code configuration (~/.claude.json or project .claude.json):"
 Write-Host '  {' -ForegroundColor DarkGray
 Write-Host '    "mcpServers": {' -ForegroundColor DarkGray
 Write-Host '      "rendereye": {' -ForegroundColor DarkGray
-Write-Host "        `"command`": `"$ExeDst`"" -ForegroundColor White
+Write-Host "        `"command`": `"$ExeJson`"" -ForegroundColor White
 Write-Host '      }' -ForegroundColor DarkGray
 Write-Host '    }' -ForegroundColor DarkGray
 Write-Host '  }' -ForegroundColor DarkGray
 Write-Host ""
+Write-Host "Codex configuration (~/.codex/config.toml):"
+Write-Host "  [mcp_servers.rendereye]" -ForegroundColor DarkGray
+Write-Host "  command = `"$ExeJson`"" -ForegroundColor White
+Write-Host ""
 Write-Host "To start the IPC service manually:"
-Write-Host "  $ExeDst service" -ForegroundColor White
+Write-Host "  $ExePath service" -ForegroundColor White
 Write-Host ""
 Write-Host "To check the version:"
-Write-Host "  $ExeDst version" -ForegroundColor White
+Write-Host "  $ExePath version" -ForegroundColor White

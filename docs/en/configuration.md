@@ -29,15 +29,15 @@ Add to `~/.claude.json` (user scope) or `.mcp.json` in your project (project sco
 {
   "mcpServers": {
     "rendereye": {
-      "command": "C:\\Users\\<you>\\AppData\\Local\\RenderEyeMCP\\rendereye-mcp.exe"
+      "command": "C:\\Tools\\RenderEyeMCP\\rendereye-mcp.exe"
     }
   }
 }
 ```
 
-Replace the path with the actual location of `rendereye-mcp.exe` — the installer places
-it at `%LOCALAPPDATA%\RenderEyeMCP\rendereye-mcp.exe` by default. On Linux or macOS use
-the path from `which rendereye-mcp`.
+Replace the path with the actual location where you extracted the release archive.
+The installer prints the correct path at the end of its output. On Linux or macOS use
+the full path to `rendereye-mcp` in your extracted directory.
 
 Restart Claude Code, then confirm:
 
@@ -60,8 +60,10 @@ scope):
 
 ```toml
 [mcp_servers.rendereye]
-command = "C:\\Users\\<you>\\AppData\\Local\\RenderEyeMCP\\rendereye-mcp.exe"
+command = "C:\\Tools\\RenderEyeMCP\\rendereye-mcp.exe"
 ```
+
+Replace the path with the actual location where you extracted the release archive.
 
 Confirm:
 

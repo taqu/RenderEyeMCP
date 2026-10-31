@@ -20,11 +20,15 @@ configuration file. Connecting a coding agent is covered in
 
 | Piece | Where |
 |-------|-------|
-| `rendereye-mcp.exe` (MCP Bridge + IPC Service) | Windows: `%LOCALAPPDATA%\RenderEyeMCP\`<br>Linux: `~/.local/bin/` |
-| RenderDoc extension `rendereye/` | Auto-detected RenderDoc plugins folder |
-| Configuration file `.env` | Same folder as the executable |
+| `rendereye-mcp.exe` (MCP Bridge + IPC Service) | Stays in the directory where you extracted the archive |
+| RenderDoc extension `rendereye/` | Windows: `%APPDATA%\qrenderdoc\extensions\rendereye\`<br>Linux: `~/.local/share/qrenderdoc/extensions/rendereye/` |
+| Configuration file `.env` | Same folder as the archive (next to `rendereye-mcp.exe`) |
 
-Nothing is installed into RenderDoc's own directory, and RenderDoc itself is not bundled.
+The executable is **not** copied to another location. Keep the extracted directory
+in place and point your coding agent's MCP configuration directly at `rendereye-mcp.exe`
+there. Moving or deleting the extracted directory requires updating the agent configuration.
+
+Nothing is installed into RenderDoc's own program directory, and RenderDoc itself is not bundled.
 
 ## Requirements
 
@@ -49,38 +53,35 @@ Open PowerShell in the extracted folder and run:
 
 The installer:
 
-1. Copies `rendereye-mcp.exe` to `%LOCALAPPDATA%\RenderEyeMCP\`.
-2. Auto-detects the RenderDoc plugins folder and copies the `extension/` files there.
-3. Creates a default `.env` in `%LOCALAPPDATA%\RenderEyeMCP\` (not overwritten on
-   subsequent runs).
+1. Verifies that `rendereye-mcp.exe` is present in the same directory.
+2. Copies the `extension/` files to `%APPDATA%\qrenderdoc\extensions\rendereye\`.
+3. Creates a default `.env` next to the executable (not overwritten on subsequent runs).
 4. Prints the MCP configuration snippet to use in your agent's config.
 
-**RenderDoc not detected?** Pass the path explicitly:
+**Custom extension directory?** Pass it explicitly:
 
 ```powershell
-.\install.ps1 -RenderDocExtDir "C:\Program Files\RenderDoc\plugins"
+.\install.ps1 -RenderDocExtDir "C:\custom\path\to\extensions"
 ```
 
-**Updating?** Re-run with `-Force` to overwrite the existing binary:
+**Updating?** Re-run with `-Force` to overwrite the existing extension:
 
 ```powershell
 .\install.ps1 -Force
 ```
 
-**Manual installation** (without the installer):
+**Manual extension installation** (without the installer):
 
 ```powershell
-$dest = "$env:LOCALAPPDATA\RenderEyeMCP"
-New-Item -ItemType Directory -Force -Path $dest
-Copy-Item rendereye-mcp.exe $dest
-# copy extension to your RenderDoc plugins\rendereye directory
-Copy-Item -Recurse extension\ "$env:APPDATA\qrenderdoc\extensions\rendereye"
+$extDst = "$env:APPDATA\qrenderdoc\extensions\rendereye"
+New-Item -ItemType Directory -Force -Path $extDst
+Copy-Item -Recurse extension\* $extDst
 ```
 
 ### Step 3 — Verify the binary
 
 ```powershell
-& "$env:LOCALAPPDATA\RenderEyeMCP\rendereye-mcp.exe" version
+.\rendereye-mcp.exe version
 ```
 
 Expected output: `rendereye-mcp v<version> ...`
@@ -105,14 +106,14 @@ cd rendereye-mcp_<version>_linux_amd64
 ./install.sh
 ```
 
-The installer copies `rendereye-mcp` to `~/.local/bin/` (or `--install-dir DIR`),
-auto-detects the RenderDoc plugins folder, copies the extension, and creates a default
-`.env` next to the binary.
+The installer verifies `rendereye-mcp` is present, copies the extension to
+`~/.local/share/qrenderdoc/extensions/rendereye/`, and creates a default `.env` next to
+the executable.
 
-**RenderDoc not detected?**
+**Custom extension directory?**
 
 ```bash
-./install.sh --renderdoc-ext-dir ~/.local/share/renderdoc/plugins
+./install.sh --renderdoc-ext-dir ~/.local/share/qrenderdoc/extensions
 ```
 
 **Updating?**
@@ -121,19 +122,10 @@ auto-detects the RenderDoc plugins folder, copies the extension, and creates a d
 ./install.sh --force
 ```
 
-### Step 3 — Add `~/.local/bin` to PATH (if needed)
-
-If the installer warns that `~/.local/bin` is not in `$PATH`, add this to your shell
-profile (`~/.bashrc` or `~/.zshrc`):
+### Step 3 — Verify the binary
 
 ```bash
-export PATH="$PATH:$HOME/.local/bin"
-```
-
-Then open a new terminal and verify:
-
-```bash
-rendereye-mcp version
+./rendereye-mcp version
 ```
 
 Linux RenderDoc integration has not been validated live; the installer follows the
@@ -161,7 +153,7 @@ Work through these in order:
 1. **Binary works**
 
    ```powershell
-   & "$env:LOCALAPPDATA\RenderEyeMCP\rendereye-mcp.exe" version
+   .\rendereye-mcp.exe version
    ```
 
    Expect a version line such as `rendereye-mcp v1.0.0 ...`
@@ -186,37 +178,46 @@ first point where the extension, the service, and the MCP bridge are all involve
 
 ## Update
 
-1. Download the new release archive and extract it.
+1. Download the new release archive and extract it to a directory.
 2. Stop any running IPC service or coding agent sessions.
-3. Re-run the installer with `-Force`:
+3. Run the installer with `-Force` to update the extension:
 
    ```powershell
    .\install.ps1 -Force
    ```
 
-4. Restart RenderDoc to load the updated extension.
-5. Restart your coding agent.
+4. Update the `command` path in your agent's MCP configuration if you extracted to a
+   new directory.
+5. Restart RenderDoc to load the updated extension.
+6. Restart your coding agent.
 
-Agent configuration files do not need changes as long as the executable path is the same.
+If you extracted the new version to the same directory, the agent configuration does not
+need to change.
 
 ## Uninstall
 
 **Windows:**
 
-```powershell
-# Remove the executable and .env
-Remove-Item -Recurse "$env:LOCALAPPDATA\RenderEyeMCP"
+1. Stop any coding agents using RenderEyeMCP and wait for the IPC service to exit.
+2. Remove the RenderEyeMCP entry from your agent's MCP configuration.
+3. Remove the RenderDoc extension:
 
-# Remove the RenderDoc extension (path may vary)
-Remove-Item -Recurse "$env:APPDATA\qrenderdoc\extensions\rendereye"
-```
+   ```powershell
+   Remove-Item -Recurse "$env:APPDATA\qrenderdoc\extensions\rendereye"
+   ```
+
+4. Delete the extracted RenderEyeMCP directory (contains `rendereye-mcp.exe` and
+   `.env`).
 
 **Linux:**
 
-```bash
-rm -f ~/.local/bin/rendereye-mcp ~/.local/bin/.env
-rm -rf ~/.local/share/renderdoc/plugins/rendereye
-```
+1. Remove the RenderDoc extension:
+
+   ```bash
+   rm -rf ~/.local/share/qrenderdoc/extensions/rendereye
+   ```
+
+2. Delete the extracted RenderEyeMCP directory.
 
 ## What was tested
 

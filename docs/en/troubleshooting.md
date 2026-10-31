@@ -46,7 +46,7 @@ directory manually, then enable it under **Tools → Manage Extensions**.
 2. Run the command directly to see any errors:
 
    ```powershell
-   & "$env:LOCALAPPDATA\RenderEyeMCP\rendereye-mcp.exe" version
+   .\rendereye-mcp.exe version
    ```
 
 3. Claude Code: `claude --debug` shows the server's stderr. Codex: see its log output.

@@ -30,15 +30,15 @@
 {
   "mcpServers": {
     "rendereye": {
-      "command": "C:\\Users\\<ユーザー名>\\AppData\\Local\\RenderEyeMCP\\rendereye-mcp.exe"
+      "command": "C:\\Tools\\RenderEyeMCP\\rendereye-mcp.exe"
     }
   }
 }
 ```
 
-パスは`rendereye-mcp.exe`の実際の場所に置き換えてください。インストーラーの既定では
-`%LOCALAPPDATA%\RenderEyeMCP\rendereye-mcp.exe`に配置されます。LinuxやmacOSでは
-`which rendereye-mcp`で確認したパスを使ってください。
+パスはリリースアーカイブを展開した実際の場所に置き換えてください。インストーラーの
+最後にこのパスが表示されます。LinuxやmacOSでは展開したフォルダーの`rendereye-mcp`への
+フルパスを使ってください。
 
 Claude Codeを再起動して確認します。
 
@@ -62,8 +62,10 @@ Claude Code固有の注意:
 
 ```toml
 [mcp_servers.rendereye]
-command = "C:\\Users\\<ユーザー名>\\AppData\\Local\\RenderEyeMCP\\rendereye-mcp.exe"
+command = "C:\\Tools\\RenderEyeMCP\\rendereye-mcp.exe"
 ```
+
+パスはリリースアーカイブを展開した実際の場所に置き換えてください。
 
 確認:
 
