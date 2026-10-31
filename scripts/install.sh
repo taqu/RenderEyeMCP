@@ -2,14 +2,15 @@
 # install.sh — RenderEyeMCP installer for Linux and macOS
 #
 # Usage:
-#   ./install.sh [--install-dir DIR] [--renderdoc-ext-dir DIR] [--force]
+#   ./install.sh [--renderdoc-ext-dir DIR] [--force]
 #
-# Run from the extracted release archive directory.
+# Run from the extracted release archive directory (where rendereye-mcp lives).
+# The executable is NOT copied anywhere — configure your coding agent to point to it
+# directly in its current location.
 set -euo pipefail
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 
-INSTALL_DIR="${HOME}/.local/bin"
 RENDERDOC_EXT_DIR=""
 FORCE=0
 
@@ -17,11 +18,10 @@ FORCE=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --install-dir)       INSTALL_DIR="$2"; shift 2 ;;
         --renderdoc-ext-dir) RENDERDOC_EXT_DIR="$2"; shift 2 ;;
         --force)             FORCE=1; shift ;;
         -h|--help)
-            echo "Usage: $0 [--install-dir DIR] [--renderdoc-ext-dir DIR] [--force]"
+            echo "Usage: $0 [--renderdoc-ext-dir DIR] [--force]"
             exit 0
             ;;
         *) echo "Unknown argument: $1"; exit 1 ;;
@@ -41,28 +41,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXE_SRC="${SCRIPT_DIR}/rendereye-mcp"
 EXT_SRC="${SCRIPT_DIR}/extension"
 
-[[ -f "$EXE_SRC" ]] || fail "rendereye-mcp not found next to install.sh ($SCRIPT_DIR)"
+[[ -f "$EXE_SRC" ]] || fail "rendereye-mcp not found in $SCRIPT_DIR. Run install.sh from the extracted release archive directory."
 
-# ── Install executable ────────────────────────────────────────────────────────
+EXE_PATH="$(cd "$(dirname "$EXE_SRC")" && pwd)/$(basename "$EXE_SRC")"
 
-step "Installing rendereye-mcp to $INSTALL_DIR"
+# ── Validate executable ───────────────────────────────────────────────────────
 
-mkdir -p "$INSTALL_DIR"
-EXE_DST="${INSTALL_DIR}/rendereye-mcp"
-
-if [[ -f "$EXE_DST" && "$FORCE" -eq 0 ]]; then
-    existing=$("$EXE_DST" version 2>/dev/null | head -1 || echo "unknown version")
-    warn "Existing installation found: $existing"
-    read -rp "    Overwrite? [y/N]: " confirm
-    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-        echo "    Skipped executable installation."
-        EXE_DST_SKIP=1
-    fi
-fi
-
-if [[ "${EXE_DST_SKIP:-0}" -eq 0 ]]; then
-    install -m 755 "$EXE_SRC" "$EXE_DST"
-    ok "Installed rendereye-mcp to $EXE_DST"
+step "Verifying rendereye-mcp"
+if VER=$("$EXE_PATH" version 2>/dev/null | head -1); then
+    ok "Executable: $VER"
+else
+    warn "Could not run version check — proceeding with extension installation."
 fi
 
 # ── Locate RenderDoc Extension directory ─────────────────────────────────────
@@ -70,48 +59,51 @@ fi
 step "Locating RenderDoc Extension directory"
 
 if [[ -z "$RENDERDOC_EXT_DIR" ]]; then
-    candidates=(
-        "/opt/renderdoc/plugins"
-        "/usr/share/renderdoc/plugins"
-        "${HOME}/.local/share/renderdoc/plugins"
-    )
-    for c in "${candidates[@]}"; do
-        if [[ -d "$c" ]]; then
-            RENDERDOC_EXT_DIR="$c"
-            break
-        fi
-    done
+    RENDERDOC_EXT_DIR="${HOME}/.local/share/qrenderdoc/extensions"
 fi
 
-if [[ -z "$RENDERDOC_EXT_DIR" ]]; then
-    warn "Could not auto-detect RenderDoc Extension directory."
-    warn "Pass --renderdoc-ext-dir to specify it, or copy extension/ manually."
-else
-    ok "RenderDoc Extension directory: $RENDERDOC_EXT_DIR"
-fi
+ok "Extension directory: $RENDERDOC_EXT_DIR"
 
 # ── Install Extension ─────────────────────────────────────────────────────────
 
-if [[ -n "$RENDERDOC_EXT_DIR" && -d "$EXT_SRC" ]]; then
-    step "Installing RenderDoc Extension to $RENDERDOC_EXT_DIR"
-    EXT_DST="${RENDERDOC_EXT_DIR}/rendereye"
+[[ -d "$EXT_SRC" ]] || fail "extension/ directory not found in $SCRIPT_DIR. The release archive may be incomplete."
+
+step "Installing RenderDoc Extension"
+
+EXT_DST="${RENDERDOC_EXT_DIR}/rendereye"
+
+if [[ -d "$EXT_DST" && "$FORCE" -eq 0 ]]; then
+    warn "Existing extension found at $EXT_DST"
+    read -rp "    Overwrite? [y/N]: " confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo "    Skipped extension installation."
+        EXT_SKIP=1
+    fi
+fi
+
+if [[ "${EXT_SKIP:-0}" -eq 0 ]]; then
     mkdir -p "$EXT_DST"
-    cp -r "${EXT_SRC}/." "$EXT_DST/"
+    # Copy extension files, skipping __pycache__
+    find "$EXT_SRC" -not -path "*/__pycache__/*" -not -name "__pycache__" | while read -r src; do
+        rel="${src#$EXT_SRC/}"
+        [[ "$rel" == "$EXT_SRC" ]] && continue
+        dst="${EXT_DST}/${rel}"
+        if [[ -d "$src" ]]; then
+            mkdir -p "$dst"
+        else
+            dstdir="$(dirname "$dst")"
+            mkdir -p "$dstdir"
+            cp "$src" "$dst"
+        fi
+    done
     ok "Extension installed to $EXT_DST"
-    warn "Restart RenderDoc for the extension to take effect."
+    warn "Restart RenderDoc, then enable the extension:"
+    warn "  Tools -> Manage Extensions -> RenderEyeMCP -> Always Load"
 fi
 
-# ── PATH reminder ─────────────────────────────────────────────────────────────
+# ── Create default .env if not present ───────────────────────────────────────
 
-if [[ ":$PATH:" != *":${INSTALL_DIR}:"* ]]; then
-    warn "$INSTALL_DIR is not in your PATH."
-    warn "Add this to your shell profile:"
-    warn "  export PATH=\"\$PATH:${INSTALL_DIR}\""
-fi
-
-# ── .env template ─────────────────────────────────────────────────────────────
-
-ENV_DST="${INSTALL_DIR}/.env"
+ENV_DST="${SCRIPT_DIR}/.env"
 if [[ ! -f "$ENV_DST" ]]; then
     cat > "$ENV_DST" <<'EOF'
 # RenderEyeMCP configuration
@@ -120,7 +112,7 @@ if [[ ! -f "$ENV_DST" ]]; then
 #RENDEREYE_IPC_PORT=37020
 #RENDEREYE_LOG_LEVEL=info
 EOF
-    ok "Created default .env in $INSTALL_DIR"
+    ok "Created default .env in $SCRIPT_DIR"
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────
@@ -128,19 +120,26 @@ fi
 echo ""
 echo "Installation complete."
 echo ""
-echo "Executable : $EXE_DST"
+echo "Executable : $EXE_PATH"
+echo ""
+echo "Keep the extracted directory in place — your coding agent runs the"
+echo "executable directly from $SCRIPT_DIR"
 echo ""
 echo "Claude Code configuration (~/.claude.json or project .claude.json):"
 echo "  {"
 echo "    \"mcpServers\": {"
 echo "      \"rendereye\": {"
-echo "        \"command\": \"$EXE_DST\""
+echo "        \"command\": \"$EXE_PATH\""
 echo "      }"
 echo "    }"
 echo "  }"
 echo ""
+echo "Codex configuration (~/.codex/config.toml):"
+echo "  [mcp_servers.rendereye]"
+echo "  command = \"$EXE_PATH\""
+echo ""
 echo "To start the IPC service manually:"
-echo "  $EXE_DST service"
+echo "  $EXE_PATH service"
 echo ""
 echo "To check the version:"
-echo "  $EXE_DST version"
+echo "  $EXE_PATH version"

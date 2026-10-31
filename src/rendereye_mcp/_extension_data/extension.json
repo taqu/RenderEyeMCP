@@ -1,9 +1,0 @@
-{
-  "extension_api": 1,
-  "name": "RenderEyeMCP",
-  "version": "1.0.0",
-  "description": "MCP bridge for RenderEyeMCP",
-  "author": "RenderEyeMCP",
-  "minimum_renderdoc": "1.46",
-  "url": "https://github.com/taqu/RenderEyeMCP"
-}
