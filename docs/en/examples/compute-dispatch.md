@@ -11,39 +11,36 @@ A compute shader writes unexpected results (zeros, garbage, a partially filled b
 Select the dispatch in RenderDoc. To find it, ask the agent:
 *"List the dispatches in this capture with their group counts."*
 
-## Example prompts
+## Example prompt
 
-**Quick investigation:**
 > Inspect the selected compute dispatch. Check its dispatch dimensions, shader resource
 > bindings, constant buffers, and output storage buffers. Examine the first few elements
 > of the output.
 
-**Detailed investigation:**
-> The selected compute dispatch is producing unexpected output. Investigate the thread
-> group dimensions and how they relate to the data size. Check all resource bindings to
-> confirm the input and output buffers are correctly bound. Read the constant buffer
-> values and report any that look incorrect. Then read the first elements of the output
-> buffer and describe what they contain.
+## Investigation workflow
 
-**Follow-up investigation (optional):**
-> Look at the compute shader disassembly to find the numthreads declaration and check
-> whether the thread group count is large enough to process all elements.
+1. `get_selected_event` — `dispatch_dimension` (thread-group counts X, Y, Z).
+2. `list_shaders` / `get_shader_info` (`stage: Compute`) — which compute shader, entry
+   point, encoding.
+3. `get_shader_reflection` (`stage: Compute`, `section: all`) — declared inputs
+   (read-only resources), outputs (read-write/UAV resources) and constant buffer layout.
+4. `get_shader_bindings` (`stage: Compute`) — what is actually bound to each slot.
+5. `read_buffer_data` on the constant buffer (from its `byte_offset`) decoded with the
+   reflected layout.
+6. Output: for a buffer UAV, `get_buffer_info` then `read_buffer_data` with a
+   `decode_layout` matching the element struct; for a texture UAV, `get_texture_info`,
+   `get_texture_statistics` and `get_pixel_value`.
+7. Optional: `get_shader_disassembly` with `search` to find the thread-group size
+   declaration (e.g. `numthreads`) or a specific instruction.
 
-## What the agent should investigate
+## Expected observations
 
-- The dispatch dimensions (thread group counts on X, Y, Z axes) and whether they are sufficient to process the intended data size
-- Which compute shader is bound and what its entry point and thread group size declaration are
-- All resource bindings: which slots have read-only inputs, which have read-write outputs (UAVs), and whether any expected slots are unbound
-- Constant buffer contents, especially counts, strides, and time values that could cause early exits
-- The first elements of the output buffer or texture UAV to observe whether data was written correctly
+- Dispatch dimensions such as `[16, 8, 16]`.
+- Bindings like `cbuffer Params → ResourceId::1401 (byte_offset 0, byte_size 256)`,
+  `InputData → ResourceId::503`, `OutputData (UAV) → ResourceId::505`.
+- Decoded constants and the first elements of the output.
 
-## Expected results
-
-- Dispatch dimensions such as `[16, 8, 16]`
-- Bindings like `cbuffer Params → ResourceId::1401`, `InputData → ResourceId::503`, `OutputData (UAV) → ResourceId::505`
-- Decoded constant values and the first elements of the output
-
-## How to interpret the results
+## Interpretation
 
 - **Dispatch dimensions are thread-group counts, not threads.** The logical workload is
   `group count × numthreads` per axis. A buffer of 1000 elements processed with

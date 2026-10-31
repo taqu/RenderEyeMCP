@@ -11,42 +11,175 @@ why it is expensive.
 ## Preparation
 
 1. RenderDoc is running with the RenderEyeMCP extension enabled.
-2. The capture is open.
+2. The capture is open. Confirm with `get_current_capture`.
 
-## Example prompts
+## Example prompt
 
-**Quick investigation:**
 > Find the ten most expensive draw calls in this capture and inspect the pipeline
 > configuration, shaders, and render targets of the most expensive one.
 
-**Detailed investigation:**
-> Measure GPU time for all events in this capture and list the ten most expensive draw
-> calls with their event IDs, names, durations, and percentage of total GPU time. For
-> the single most expensive draw call, collect pipeline statistics, identify the vertex
-> and pixel shaders, inspect the render targets (format, resolution, sample count), and
-> list the pixel shader's texture bindings. Separate confirmed facts from hypotheses
-> about why it is expensive.
+---
 
-## What the agent should investigate
+## Investigation workflow
 
-- Measure GPU duration for all events and rank them to find the top 10 by cost
-- For the most expensive draw call, examine its pipeline state: draw count, topology, rasterizer settings
-- Identify the bound vertex and pixel shaders and their entry points
-- Check the render targets bound during this draw: format, resolution, and MSAA sample count
-- Collect pipeline statistics if available: vertex invocations, pixel shader invocations, primitives rasterized
+### 1. Confirm the capture is loaded
 
-## Expected results
+```json
+{ "tool": "get_current_capture" }
+```
 
-Typically one or two events account for a disproportionate share of GPU time — in open-world or outdoor scenes this is often terrain, dense vegetation, or a character batch. The most expensive event is usually in a G-buffer or shadow pass. Render target resolution and MSAA sample count often explain a large fraction of the cost without any shader analysis.
+Expected response (illustrative):
 
-## How to interpret the results
+```json
+{
+  "status": "loaded",
+  "path": "C:/captures/game_frame_0042.rdc",
+  "api": "D3D12",
+  "frame_number": 42
+}
+```
 
-- `percent_of_total: 23.0` on a terrain draw means terrain is the dominant GPU consumer.
-- If pixel shader invocations are much higher than the visible pixel count, overdraw or large triangle counts pushing many off-screen pixels are likely.
-- A high-resolution render target with 4× MSAA quadruples pixel shader work compared to 1×.
-- A complex pixel shader (many texture samples, lighting iterations) on a high-invocation draw is a classic bottleneck; check the shader disassembly for instruction count.
-- GPU duration is replay-based; thermal state during capture and during replay may differ, so absolute millisecond values can vary slightly from what the live application measured.
-- If performance summary returns fewer than 10 events, some events were not captured by the counter (missing counter values are absent, not zero).
+### 2. List available GPU counters and find timing counters
+
+```json
+{ "tool": "list_gpu_counters" }
+```
+
+Scan the response for counters whose `unit` is `seconds` or `nanoseconds`, or whose
+`category` is `timing`. Note their `counter_id` values.
+
+Example response excerpt (illustrative):
+
+```json
+{
+  "counters": [
+    { "counter_id": 1, "name": "GPU Duration", "unit": "seconds", "category": "timing",
+      "description": "Time the GPU spent processing this event." },
+    { "counter_id": 2, "name": "VS Invocations", "unit": "count", "category": "pipeline" },
+    { "counter_id": 3, "name": "PS Invocations", "unit": "count", "category": "pipeline" }
+  ]
+}
+```
+
+Here `counter_id: 1` is the GPU duration counter. Record it.
+
+### 3. Collect GPU timing counters
+
+```json
+{
+  "tool": "collect_gpu_counters",
+  "counter_ids": [1],
+  "repeats": 2
+}
+```
+
+Using `repeats: 2` reduces noise from thermal throttling with minimal extra cost.
+
+Response (illustrative):
+
+```json
+{ "measurement_id": "meas_7f3a2b" }
+```
+
+### 4. Check measurement status
+
+```json
+{
+  "tool": "get_gpu_measurement_status",
+  "measurement_id": "meas_7f3a2b"
+}
+```
+
+Poll until status is `ready`:
+
+```json
+{ "measurement_id": "meas_7f3a2b", "status": "ready", "event_count": 533 }
+```
+
+### 5. Get performance summary — top 10
+
+```json
+{
+  "tool": "get_performance_summary",
+  "measurement_id": "meas_7f3a2b",
+  "top_n": 10
+}
+```
+
+Example response (illustrative):
+
+```json
+{
+  "total_measured_seconds": 0.01482,
+  "top_events": [
+    { "event_id": 1042, "event_name": "DrawIndexedInstanced() — terrain_patch_00",
+      "duration_seconds": 0.00341, "percent_of_total": 23.0 },
+    { "event_id": 876,  "event_name": "DrawIndexedInstanced() — vegetation_lod0",
+      "duration_seconds": 0.00198, "percent_of_total": 13.4 },
+    { "event_id": 1198, "event_name": "DrawIndexedInstanced() — characters_batch",
+      "duration_seconds": 0.00145, "percent_of_total": 9.8 },
+    ...
+  ]
+}
+```
+
+Event 1042 (`terrain_patch_00`) is the clear outlier at 23 % of measured GPU time.
+
+### 6. Inspect the most expensive draw call
+
+Select event 1042 in the RenderDoc GUI, then gather:
+
+**Pipeline state:**
+
+```json
+{ "tool": "get_pipeline_state", "event_id": 1042 }
+```
+
+Look for bound vertex/index buffers, rasterizer state (fill mode, cull mode), depth
+stencil settings, blend state, and the number of render targets.
+
+**Shaders:**
+
+```json
+{ "tool": "get_current_shaders", "event_id": 1042 }
+```
+
+Note vertex shader and pixel shader entry points and their resource bind counts.
+Optionally fetch disassembly for the pixel shader if instruction count is available.
+
+**Render targets:**
+
+```json
+{ "tool": "get_render_targets", "event_id": 1042 }
+```
+
+Note output resolution and format — high-resolution HDR targets with MSAA multiply PS
+invocation cost significantly.
+
+### 7. Interpret the results
+
+Combine the findings:
+
+- `percent_of_total: 23.0` — terrain is the dominant GPU consumer.
+- If the pixel shader invocation count (from `get_pipeline_statistics`) is very high
+  relative to visible pixel count, overdraw or a large triangle count pushing many
+  off-screen pixels is likely.
+- A high-resolution render target with 4x MSAA quadruples pixel shader work compared to
+  1x.
+- A complex pixel shader (many texture samples, lighting iterations) on a high-invocation
+  draw is a classic bottleneck; check the shader disassembly for instruction count.
+
+---
+
+## Expected observations
+
+- One or two events account for a disproportionate share of GPU time (typical for games
+  with terrain or dense vegetation).
+- The most expensive event is usually in a G-buffer or shadow pass, not post-processing.
+- Render target resolution and MSAA sample count often explain a large fraction of the
+  cost without any shader analysis.
+
+---
 
 ## Limitations
 

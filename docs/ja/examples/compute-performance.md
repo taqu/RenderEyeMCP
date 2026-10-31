@@ -1,6 +1,6 @@
 [English](../../en/examples/compute-performance.md) | [日本語](compute-performance.md)
 
-# シナリオP3 — 最もコストの高いコンピュートディスパッチを特定する
+# シナリオI — 最もコストの高いコンピュートディスパッチを特定し、シェーダーとリソースバインディングを調査する
 
 ## 問題
 
@@ -11,62 +11,201 @@ Bindingを確認して最適化の手がかりをつかみたい状況です。
 ## 準備
 
 1. RenderEyeMCP拡張機能を有効にしたRenderDocが起動している。
-2. 対象のCaptureがロード済みで、コンピュートDispatchが含まれている。
-   Captureの統計でDispatch数を確認する。
+2. 対象のCaptureがロード済みである。
+3. `list_renderdoc_sessions`でセッションを確認し、`session_id`を控えておく。
 
 ## プロンプト例
 
-**クイック調査:**
-> このFrameで最もGPU時間を消費しているCompute Dispatchを特定してください。
-> 最も重いDispatchについて、Shaderのエントリポイント、スレッドグループ数、
-> 読み書きするBufferとTextureを教えてください。
+> このCaptureで最もGPU時間を消費しているCompute Dispatchを上位5件挙げてください。
+> それぞれのDispatchについて、Shaderのエントリポイント、スレッドグループ数、
+> リソースBindingを確認し、最適化の観点から気になる点を教えてください。
 
-**詳細な調査:**
-> このCaptureの全EventのGPU時間を計測し、最もコストの高いCompute Dispatchを上位5件
-> 挙げてください。最もコストの高いDispatchについて、EventのIDと名前、計測されたGPU時間と
-> 全体に占める割合、Shaderのエントリポイント、スレッドグループ数とサイズ、バインドされた
-> 全入力Texture・出力UAVとそのフォーマット・サイズを報告してください。大きなTexture・高い
-> スレッド数・帯域幅への影響など、ボトルネックの可能性についても考察してください。
+## 調査の流れ
 
-## 調査内容
+### 1. 利用可能なカウンターを確認する
 
-- 全EventのGPU時間を計測し、最もコストの高いDispatchを抽出する
-- 対象Dispatchのスレッドグループ数とスレッドグループサイズ(numthreads)から総スレッド数を推計する
-- Compute Shaderのエントリポイントを特定し、可能なら命令数を確認する
-- バインドされた全入力リソース(SRV)と出力リソース(UAV)のフォーマットとサイズを一覧する
-- 入力としてバインドされている特に大きなTextureが存在するか確認する(テクスチャキャッシュ圧力の原因になる)
+```json
+{
+  "tool": "list_gpu_counters",
+  "arguments": { "session_id": "..." }
+}
+```
 
-## 期待される結果
+タイミング系カウンターの`counter_id`を確認します。
 
-Deferredレンダラーでは、Deferred Lightingのディスパッチが4.48ms(総GPU時間の30.2%)を
-消費し、約200万スレッドを実行し、4枚のフルレゾリューションGBufferTextureと大きな
-4096×4096シャドウアトラスを読み取る、といった結果が得られます。シャドウアトラスは32MBで
-GPU L2テクスチャキャッシュ(一般的に2〜8MB)を大きく上回るため、キャッシュ圧力の候補です。
+### 2. 計測を実行する
 
-## 結果の解釈
+```json
+{
+  "tool": "collect_gpu_counters",
+  "arguments": {
+    "session_id": "...",
+    "counter_ids": [1, 2],
+    "repeats": 3
+  }
+}
+```
 
-- Shaderの命令数は逆アセンブルからの推定値です。実際のGPUサイクルはILPとメモリレイテンシーに
-  依存し、命令数だけでは決まりません。
-- Deferredレンダラーでは、Deferred LightingのDispatchが通常最もコストの高い単一Dispatchで、
-  GPU フレーム時間の20〜40%を占めることが多いです。
-- SSAOとブルームは通常もっと軽いですが、フルレゾリューション実装では重くなることがあります。
-- 大きな読み取り専用リソース(シャドウアトラス、環境マップ、GIキャッシュ)はキャッシュ圧力の
-  よくある原因です。
-- スレッド数・命令数・Textureサイズの観察を組み合わせて仮説を立てますが、帯域幅/ALU
-  ボトルネックの結論は専用カウンターデータが必要な仮説として明記してください。
+### 3. 上位のコストの高いイベントを確認する
 
-## 制限事項
+```json
+{
+  "tool": "get_performance_summary",
+  "arguments": {
+    "measurement_id": "meas_...",
+    "top_n": 20
+  }
+}
+```
 
-- 命令数は逆アセンブルからの推定値です。実際のGPUサイクルはILPとメモリレイテンシーに依存します。
-- キャッシュミスカウンターは一部のGPU(AMD、Intel)では利用可能ですが、すべての
-  NVIDIA/D3D12構成では利用できません。
-- バインドされたリソースは報告されますが、アクセスパターンは報告されません。ほとんど
-  サンプリングされないバインドされたTextureもリストに表示されます。
+Dispatchイベント(名前に`Dispatch`を含むもの、またはイベント種別が`dispatch`のもの)
+を探します。
 
-## 関連ツール
+### 4. タイミングの詳細を確認する
 
-`list_gpu_counters`、`collect_gpu_counters`、`get_gpu_measurement_status`、
-`get_performance_summary`、`get_pipeline_state`、`get_current_shaders`、
-`get_shader_bindings` —
+```json
+{
+  "tool": "get_gpu_timings",
+  "arguments": {
+    "measurement_id": "meas_...",
+    "sort_by": "duration_desc",
+    "limit": 50,
+    "offset": 0
+  }
+}
+```
+
+DrawCallとDispatchが混在している場合、Dispatchを絞り込んで確認します。
+
+### 5. 対象DispatchのShaderを確認する
+
+コストの高いDispatchを選択した状態で、Compute Shaderの情報を取得します。
+
+```json
+{
+  "tool": "list_shaders",
+  "arguments": { "session_id": "..." }
+}
+```
+
+```json
+{
+  "tool": "get_shader_info",
+  "arguments": {
+    "session_id": "...",
+    "stage": "Compute"
+  }
+}
+```
+
+### 6. Shaderのリフレクションを確認する
+
+```json
+{
+  "tool": "get_shader_reflection",
+  "arguments": {
+    "session_id": "...",
+    "stage": "Compute",
+    "section": "all"
+  }
+}
+```
+
+入力リソース(SRV)、出力リソース(UAV)、Constant Bufferのレイアウトを確認します。
+
+### 7. リソースBindingを確認する
+
+```json
+{
+  "tool": "get_shader_bindings",
+  "arguments": {
+    "session_id": "...",
+    "stage": "Compute"
+  }
+}
+```
+
+各スロットに何がBindされているか確認します。UnbindのスロットやNullリソースが
+ないかチェックしてください。
+
+### 8. スレッドグループの設定を確認する
+
+```json
+{
+  "tool": "get_selected_event",
+  "arguments": { "session_id": "..." }
+}
+```
+
+`dispatch_dimension`からX、Y、Zのスレッドグループ数を確認します。
+`numthreads`宣言と組み合わせて、実際に処理するスレッド数を計算できます。
+
+```json
+{
+  "tool": "get_shader_disassembly",
+  "arguments": {
+    "session_id": "...",
+    "stage": "Compute",
+    "search": "numthreads"
+  }
+}
+```
+
+### 9. 必要に応じてConstant Bufferを確認する
+
+```json
+{
+  "tool": "read_buffer_data",
+  "arguments": {
+    "session_id": "...",
+    "resource_id": 1401,
+    "byte_offset": 0,
+    "byte_size": 256,
+    "decode_layout": [
+      { "name": "element_count", "type": "uint32" },
+      { "name": "stride", "type": "uint32" }
+    ]
+  }
+}
+```
+
+処理件数(`element_count`)やStrideが正しいか確認します。
+
+## 確認できること
+
+- GPU時間でソートされたDispatchの一覧と`event_id`。
+- 各DispatchのCompute Shaderのエントリポイントとシェーダーエンコーディング。
+- `dispatch_dimension`(スレッドグループ数 X、Y、Z)。
+- 入力/出力リソースのBinding状況(バインド済み/未バインド/Nullリソース)。
+- Constant Bufferのデコード済み定数値。
+
+## 解釈
+
+- **Dispatchの次元はスレッドグループ数です。** 実際のスレッド数は
+  `グループ数 × numthreads`です。処理対象のデータサイズに対してグループ数が
+  少なすぎると、末尾データが処理されません。
+- **UAVが未BindまたはNullリソース** — 出力が書き込まれていない可能性があります。
+- **Constant Bufferの`element_count`が0** — 早期リターンしてなにも処理されていない
+  可能性があります。
+- **スレッドグループ数が1** — GPU並列度が活かせていない可能性があります。
+  処理量に応じてグループ数を増やすことを検討してください。
+- **同じShaderが多数のDispatchで実行されている** — バッチ処理に統合できないか
+  検討してください。
+
+## 制限
+
+- 個々のスレッドのステップ実行や内部状態の検査はできません(Shaderデバッグなし)。
+- Structured Bufferの読み取りには要素の構造体に合った`decode_layout`が必要です
+  (1回の読み出しは100要素・16384バイトまで。`offset`でページ送り)。
+- Indirect Dispatchの引数は特別扱いでデコードしません。引数Bufferを
+  `read_buffer_data`で読んでください。
+- 計測はリプレイベースです。ライブ実行時とは異なるGPUクロック状態になる場合があります。
+
+## 関連Tool
+
+`list_gpu_counters`、`collect_gpu_counters`、`get_performance_summary`、
+`get_gpu_timings`、`get_selected_event`、`list_capture_events`、
+`list_shaders`、`get_shader_info`、`get_shader_reflection`、
+`get_shader_bindings`、`get_shader_disassembly`、`read_buffer_data` —
 [パフォーマンス分析ガイド](../performance.md)および
-[Toolリファレンス](../tools.md#gpuパフォーマンス分析)を参照。
+[Toolリファレンス](../tools.md)を参照。

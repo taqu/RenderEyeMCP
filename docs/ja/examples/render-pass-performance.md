@@ -1,6 +1,6 @@
 [English](../../en/examples/render-pass-performance.md) | [日本語](render-pass-performance.md)
 
-# シナリオP2 — レンダーパスごとのGPUコストを比較する
+# シナリオH — レンダーパスごとのGPUコストを比較する
 
 ## 問題
 
@@ -12,65 +12,141 @@ Shadow、GBuffer、Lighting、PostProcessなど、複数のレンダーパスの
 1. RenderEyeMCP拡張機能を有効にしたRenderDocが起動している。
 2. 対象のCaptureがロード済みである。エンジン側でデバッグマーカー(`PIXBeginEvent`、
    `vkCmdBeginDebugUtilsLabelEXT`など)が設定されていると、階層構造で集計できます。
-   Eventリストにマーカーエントリがあるか確認してください。
+3. `list_renderdoc_sessions`でセッションを確認し、`session_id`を控えておく。
 
 ## プロンプト例
 
-**クイック調査:**
 > Shadow、GBuffer、Lighting、PostProcessの各レンダーパスのGPUコストを比較してください。
-> どのパスが最も重く、そのパス内の個別EventのタイミングはどうなっているかをEvent名と
-> 時間とともに教えてください。
+> どのパスが最も重く、改善の余地があるか教えてください。
 
-**詳細な調査:**
-> このCaptureのGPU時間を計測し、名前付き各レンダーパスのコストを比較してください。
-> 各パスの集計GPU時間、Event数、全体に占める割合を報告してください。最もコストの高い
-> パスについては、内部のEventをコスト順にソートして一覧し、そのパス内で最もコストが高い
-> 単一のEventを特定してください。
+## 調査の流れ
 
-## 調査内容
+### 1. 利用可能なカウンターを確認する
 
-- 全EventのGPU時間を計測し、デバッグマーカーグループを使ってレンダーパスごとに集計する
-- 各パス: 名前、集計された合計時間、Event数、全体に占める割合
-- 最もコストの高いパス: そのパス内の個別Eventをコスト順にソートして支配的なEventを特定する
+```json
+{
+  "tool": "list_gpu_counters",
+  "arguments": { "session_id": "..." }
+}
+```
 
-## 期待される結果
+タイミング系カウンターの`counter_id`を確認します。
 
-Deferredレンダラーの典型的な結果: Lighting 42.6%、GBuffer 33.0%、PostProcessing 14.7%、
-ShadowMap 7.6%。Lightingパス内では、Deferred Lighting Compute Dispatchだけでそのパスの
-時間の71%を占めることもあります。
+### 2. 計測を実行する
+
+```json
+{
+  "tool": "collect_gpu_counters",
+  "arguments": {
+    "session_id": "...",
+    "counter_ids": [1],
+    "repeats": 3
+  }
+}
+```
+
+### 3. レンダーパスごとの集計を取得する
+
+```json
+{
+  "tool": "get_render_pass_performance",
+  "arguments": {
+    "measurement_id": "meas_..."
+  }
+}
+```
+
+レスポンスにはデバッグマーカーの階層が含まれ、各パスの`aggregated_duration`が
+示されます。
+
+### 4. 重いパスのイベント詳細を確認する
+
+コストが高いパスが特定できたら、そのパス内のイベントを個別に確認します。
+
+```json
+{
+  "tool": "get_gpu_timings",
+  "arguments": {
+    "measurement_id": "meas_...",
+    "sort_by": "duration_desc",
+    "limit": 30,
+    "offset": 0
+  }
+}
+```
+
+対象パスの`event_id`範囲に絞ることで、パス内で最も重いDrawCallを特定できます。
+
+### 5. パス間でパイプライン統計を比較する
+
+```json
+{
+  "tool": "get_pipeline_statistics",
+  "arguments": {
+    "measurement_id": "meas_..."
+  }
+}
+```
+
+各パスの頂点数やピクセルシェーダー呼び出し数を比較して、処理量の違いを把握します。
 
 ## `aggregated_duration` の意味
 
-`aggregated_duration`は**パスグループ内の葉EventのGPU時間の合計**であり、そのパスの
-GPUウォールクロック経過時間ではありません。この違いが重要になる2つのケース:
+`aggregated_duration`は**葉イベント(子を持たないイベント)の計測値の合計**です。
+GPUがそのパス全体に費やした実際の経過時間(ウォールクロック)とは異なります。
 
-- **イベントのオーバーラップ**: タイルGPUや非同期対応GPUでは、パス内のEventがハードウェア上で
-  オーバーラップする場合があります。それらを合算すると実際の経過時間を過大評価します。
-- **カウンター値の欠損**: パス内のEventの一部がカウンター結果を生成しなかった場合、それらのEventは
-  欠損(ゼロではない)として扱われます。この場合、集計値は過小評価になります。
+具体例で説明します。
 
-非同期コンピュートなしのD3D12またはVulkanのほとんどのデスクトップGPUキャプチャでは、
-葉の合計はほぼ経過時間に近い値になります。
+```
+GBuffer (aggregated_duration: 4.2ms)
+├── DrawCall A  (1.1ms) ← 葉イベント
+├── DrawCall B  (2.0ms) ← 葉イベント
+└── DrawCall C  (1.1ms) ← 葉イベント
+```
 
-- LightingパスとGBufferパスがDeferredレンダラーでは通常支配的です。
-- 単一のコンピュートDispatchがLightingパスのコストの大部分を占めることが多いです。
-- PostProcessingパスは通常速いですが、フルレゾリューションのブラーチェーンやレイトレーシングを
-  含む場合は重くなります。
-- Shadowパスはカスケードを積極的にカリングしていれば速いですが、シャドウキャスティングライトが
-  多い場合はスパイクします。
+この場合、GBufferの`aggregated_duration`は`1.1 + 2.0 + 1.1 = 4.2ms`です。
+ただしGPUが実際にGBufferパスにかけた経過時間は、コマンドキューの並列実行や
+オーバーラップにより異なる場合があります。
 
-## 制限事項
+次のような場合、合計が実際より小さくなることがあります。
 
-- パスのグループ化はCaptureのデバッグマーカーに依存します。アプリケーションが
-  `BeginEvent`/`EndEvent`を発行していない場合、全Eventがトップレベルに表示され、
-  パスレベルのパフォーマンスはフラットなリストを返します。
-- `aggregated_duration`はウォールクロックパス経過時間ではありません(上記を参照)。
-- 計測されたEventが0件のパス(パスは実行したが全Eventでカウンターデータが欠損している場合)は
-  結果に表示されません。
+- 葉でない中間イベントが計測対象に含まれていない。
+- 一部のDrawCallのカウンターが取得できなかった(欠損はゼロではなく省かれます)。
 
-## 関連ツール
+## 確認できること
 
-`list_gpu_counters`、`collect_gpu_counters`、`get_gpu_measurement_status`、
-`get_render_pass_performance`、`get_gpu_timings` —
+| パス | aggregated_duration | 主なDrawCall数 |
+|------|---------------------|----------------|
+| Shadow | 1.8ms | 45 |
+| GBuffer | 4.2ms | 183 |
+| Lighting | 2.1ms | 12 |
+| PostProcess | 0.9ms | 8 |
+
+このような比較から、GBufferが最も重いことがわかります。
+
+## 解釈
+
+- **GBufferが重い** — 描画するオブジェクト数(DrawCall数)が多いか、各DrawCallの
+  ピクセルシェーダーが複雑な可能性があります。`get_performance_summary`で上位の
+  DrawCallを確認してください。
+- **Shadowが重い** — シャドウキャスターの数が多すぎるか、ShadowMap解像度が高すぎる
+  可能性があります。
+- **Lightingが相対的に重い** — 光源数が多いか、ライティングシェーダーが複雑な
+  可能性があります。
+- **パスの`aggregated_duration`がゼロ、またはパスが表示されない** — デバッグマーカーが
+  設定されていないか、カウンターが取得できなかった可能性があります。
+
+## 制限
+
+- デバッグマーカーが設定されていないCaptureでは、パス階層が表示されません。
+  その場合は`get_gpu_timings`でイベント単位のタイミングを確認してください。
+- `aggregated_duration`はウォールクロック経過時間ではないため、パス間の合計が
+  Frameの総GPU時間と一致しない場合があります。
+- カウンター可用性はGPU/ドライバー/APIによって異なります。
+
+## 関連Tool
+
+`list_gpu_counters`、`collect_gpu_counters`、`get_render_pass_performance`、
+`get_gpu_timings`、`get_performance_summary`、`get_pipeline_statistics` —
 [パフォーマンス分析ガイド](../performance.md)および
 [Toolリファレンス](../tools.md#gpuパフォーマンス分析)を参照。

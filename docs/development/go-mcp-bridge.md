@@ -81,6 +81,30 @@ internal/bridge/
   uuid.go        — UUID generation via crypto/rand
 ```
 
+## Python-to-Go Comparison Testing
+
+To switch between Python and Go bridges in Claude Code, edit `.claude.json` `mcpServers`:
+
+```json
+// Python bridge
+{ "command": "python", "args": ["-m", "rendereye_mcp"] }
+
+// Go bridge
+{ "command": "./rendereye-mcp" }
+```
+
+Both work with the same Go Shared IPC Service.
+
+## Mixed Migration Support
+
+The following configurations are supported simultaneously:
+
+| Bridge A           | Bridge B           | Service                |
+|--------------------|--------------------|------------------------|
+| Python MCP Bridge  | —                  | Go Shared IPC Service  |
+| Go MCP Bridge      | —                  | Go Shared IPC Service  |
+| Python MCP Bridge  | Go MCP Bridge      | Go Shared IPC Service  |
+
 ## Known Limitations
 
 | Limitation                                                        | Notes              |
@@ -90,3 +114,12 @@ internal/bridge/
 | Claude Code and Codex validation requires running agents          | Manual testing     |
 | No MCP contract snapshot tests yet                                | Phase 18 follow-up |
 
+## Phase 19 Readiness
+
+Phase 18 establishes:
+- Full MCP interface compatibility with 58 tools
+- stdio transport (required for coding agents)
+- Auto-start of IPC service
+- Cross-platform builds (Windows, Linux, macOS)
+
+Phase 19 (Single Binary & Cross-Platform Distribution) can consolidate `rendereye-ipc` and `rendereye-mcp` into a single binary with service-mode selection.

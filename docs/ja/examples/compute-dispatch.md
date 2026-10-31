@@ -15,36 +15,34 @@ RenderDocでそのDispatchを選択します。探すときはエージェント
 
 ## プロンプト例
 
-**クイック調査:**
 > 選択中のCompute Dispatchを調べてください。Dispatchの次元、Shaderリソースの
 > Binding、Constant Buffer、出力用のStorage Bufferを確認し、出力の先頭の数要素を
 > 確認してください。
 
-**詳細な調査:**
-> 選択中のCompute Dispatchが想定外の出力を生成しています。スレッドグループの次元と
-> データサイズとの関係を調べてください。すべてのリソースBindingを確認して、入力と出力の
-> Bufferが正しくBindされているか確認してください。Constant Bufferの値を読んでおかしなものを
-> 報告してください。その後、出力Bufferの先頭要素を読んで内容を説明してください。
+## 調査の流れ
 
-**フォローアップ (任意):**
-> Compute Shaderの逆アセンブルでnumthreads宣言を探し、スレッドグループ数が全要素を
-> 処理するのに十分かどうか確認してください。
+1. `get_selected_event` — `dispatch_dimension`(X、Y、Zのスレッドグループ数)。
+2. `list_shaders` / `get_shader_info`(`stage: Compute`) — どのCompute Shaderか、
+   エントリポイント、エンコーディング。
+3. `get_shader_reflection`(`stage: Compute`、`section: all`) — 宣言された入力
+   (読み取り専用リソース)、出力(読み書き/UAVリソース)、Constant Bufferのレイアウト。
+4. `get_shader_bindings`(`stage: Compute`) — 各スロットに実際にBindされているもの。
+5. Constant Bufferを(`byte_offset`から)`read_buffer_data`し、Reflectionの
+   レイアウトでデコードする。
+6. 出力: BufferのUAVなら`get_buffer_info`の後、要素の構造体に合わせた`decode_layout`で
+   `read_buffer_data`。TextureのUAVなら`get_texture_info`、`get_texture_statistics`、
+   `get_pixel_value`。
+7. 必要なら`get_shader_disassembly`の`search`で、スレッドグループサイズの宣言
+   (`numthreads`など)や特定の命令を探す。
 
-## 調査内容
+## 確認できること
 
-- Dispatchの次元(X、Y、Z軸のスレッドグループ数)と、それが処理するデータサイズに対して十分かどうか
-- どのCompute Shaderがバインドされているか、エントリポイントとスレッドグループサイズの宣言
-- 全リソースBinding: 読み取り専用の入力スロット、読み書き可能な出力スロット(UAV)、バインドされていないスロットがないか
-- Constant Bufferの内容。特に早期リターンの原因になり得る件数・Stride・時間値
-- 出力BufferまたはTexture UAVの先頭要素が正しく書き込まれているか
+- `[16, 8, 16]`のようなDispatchの次元。
+- `cbuffer Params → ResourceId::1401 (byte_offset 0, byte_size 256)`、
+  `InputData → ResourceId::503`、`OutputData (UAV) → ResourceId::505`のようなBinding。
+- デコードした定数と、出力の先頭要素。
 
-## 期待される結果
-
-- `[16, 8, 16]`のようなDispatchの次元
-- `cbuffer Params → ResourceId::1401`、`InputData → ResourceId::503`、`OutputData (UAV) → ResourceId::505`のようなBinding
-- デコードした定数値と出力の先頭要素
-
-## 結果の解釈
+## 解釈
 
 - **Dispatchの次元はスレッド数ではなく、スレッドグループ数です。** 論理的な処理量は
   軸ごとに`グループ数 × numthreads`です。1000要素のBufferを`numthreads(64,1,1)`で処理する
@@ -56,7 +54,7 @@ RenderDocでそのDispatchを選択します。探すときはエージェント
   上書きされるならDispatch自体を選択し、Dispatch前の状態が必要なら直前のEventを選択して
   ください。
 
-## 制限事項
+## 制限
 
 - 個々のスレッドの実行をステップ実行したり調べたりはできません(Shaderデバッグなし)。
 - Structured Bufferには要素の構造体に合った`decode_layout`が必要です(1回の読み出しは
@@ -64,7 +62,7 @@ RenderDocでそのDispatchを選択します。探すときはエージェント
 - Indirect Dispatchの引数は特別扱いでデコードしません。必要なら引数Bufferを
   `read_buffer_data`で読んでください。
 
-## 関連ツール
+## 関連Tool
 
 `get_selected_event`、`list_capture_events`、`list_shaders`、`get_shader_info`、
 `get_shader_reflection`、`get_shader_bindings`、`get_shader_disassembly`、

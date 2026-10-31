@@ -11,37 +11,191 @@
 ## 準備
 
 1. RenderEyeMCP 拡張機能を有効にした状態で RenderDoc が起動していること。
-2. キャプチャがロードされていて、コンピュートシェーダーを含むディスパッチの
-   event_id がわかっているか、GUI で選択されていること。
+2. キャプチャがロードされていること。`get_current_capture` で確認してください。
+3. コンピュートシェーダーを含むディスパッチの event_id がわかっているか、
+   GUI で選択されていること。
 
 ## プロンプト例
 
-**クイック調査:**
 > イベント 550 のコンピュートディスパッチが出力バッファに NaN を生成しています。
 > ワークグループ (0,0,0) のスレッド (0,0,0) をステップ実行して NaN を最初に
 > 生成した命令を見つけてください。
 
-**詳細な調査:**
-> イベント 550 のコンピュートシェーダーをデバッグしてください。ワークグループ (0,0,0) の
-> スレッド (0,0,0) をステップ実行し、NaN または Inf を最初に生成するステップを見つけて
-> ください。そのステップと直前のステップで全変数の値を確認してください。また、境界以外の
-> 領域のスレッドで同じシェーダーを実行し、NaN が特定の入力に限定されるか確認してください。
+---
 
-## 調査内容
+## 調査ワークフロー
 
-- 指定したコンピュートスレッドとワークグループのシェーダーデバッグトレースを収集する
-- 全実行ステップをスキャンして NaN または Inf が最初に発生するステップを特定する
-- そのステップと直前のステップで変数値を調べ、問題の原因となる入力を特定する
-- 別の領域のスレッドと比較して、NaN が特定のピクセル領域に限定されるか確認する
+### 1. ディスパッチが選択されていることを確認する
 
-## 期待される結果
+```json
+{ "tool": "get_current_capture" }
+```
 
-エージェントは NaN が最初に現れるステップ番号と関係する変数名を特定できるはずです。例えば、
-ステップ 47 で変数 `log_lum` が `Inf` になるのは、`luminance` と `epsilon` が両方ゼロのため
-`log(luminance + epsilon)` が `log(0.0)` に評価されるためです。`-Inf` に対する後続の演算が
-`NaN` を生成します。
+### 2. コンピュートシェーダーデバッグトレースを収集する
 
-完全な調査の場合、以下のような根本原因まとめが得られます:
+```json
+{
+  "tool": "debug_compute_shader",
+  "event_id": 550,
+  "group_x": 0, "group_y": 0, "group_z": 0,
+  "thread_x": 0, "thread_y": 0, "thread_z": 0
+}
+```
+
+レスポンス例 (説明用):
+
+```json
+{
+  "debug_id": "dbg_ff00aa11",
+  "stage": "compute",
+  "event_id": 550,
+  "step_count": 112,
+  "truncated": false
+}
+```
+
+### 3. すべてのステップで NaN フラグをスキャンする
+
+`generated_nan_or_inf` フラグをスキャンするために大きなバッチを要求します:
+
+```json
+{
+  "tool": "get_shader_debug_trace",
+  "debug_id": "dbg_ff00aa11",
+  "first_step": 0,
+  "count": 200
+}
+```
+
+返されたステップで `"generated_nan_or_inf": true` を探します。例 (説明用):
+
+```json
+{
+  "steps": [
+    { "step": 0,  "generated_nan_or_inf": false, "changes": [] },
+    { "step": 10, "generated_nan_or_inf": false, "changes": [
+        { "after": { "name": "luminance", "value": [0.0] } }
+    ]},
+    { "step": 47, "generated_nan_or_inf": true,  "changes": [
+        { "before": { "name": "log_lum", "value": [0.0] },
+          "after":  { "name": "log_lum", "value": ["Inf"] } }
+    ]},
+    { "step": 48, "generated_nan_or_inf": true,  "changes": [
+        { "before": { "name": "tone_factor", "value": [0.0] },
+          "after":  { "name": "tone_factor", "value": ["NaN"] } }
+    ]}
+  ]
+}
+```
+
+ステップ 47 が **最初の** NaN/Inf です。変数 `log_lum` が `Inf` になっています。
+
+### 4. NaN ステップで変数を検査する
+
+```json
+{
+  "tool": "get_shader_debug_variables",
+  "debug_id": "dbg_ff00aa11",
+  "step": 47
+}
+```
+
+レスポンス例 (説明用):
+
+```json
+{
+  "variables": {
+    "luminance":  { "name": "luminance",  "value": [0.0] },
+    "log_lum":    { "name": "log_lum",    "value": ["Inf"] },
+    "epsilon":    { "name": "epsilon",    "value": [0.0] }
+  }
+}
+```
+
+`log_lum` は `log(luminance + epsilon)` として計算されています。`luminance` と
+`epsilon` の両方が `0.0` のため、`log(0.0) = -Inf` になります。`-Inf` に対する
+後続の算術演算が `NaN` を生成します。
+
+### 5. 1 ステップ前の変数を検査する
+
+```json
+{
+  "tool": "get_shader_debug_variables",
+  "debug_id": "dbg_ff00aa11",
+  "step": 46,
+  "variable_names": ["luminance", "epsilon", "input_color"]
+}
+```
+
+レスポンス例 (説明用):
+
+```json
+{
+  "variables": {
+    "luminance":   { "value": [0.0] },
+    "epsilon":     { "value": [0.0] },
+    "input_color": { "value": [0.0, 0.0, 0.0, 1.0] }
+  }
+}
+```
+
+このスレッドでは `input_color` が黒 (ゼロ) — 黒い境界ピクセルです。黒いピクセルに
+対して `luminance` が正しくゼロになっています。バグは `epsilon` が `log(0)` を
+防ぐための小さな非ゼロ定数 (例: `1e-6`) であるべきところ、`0.0` として読み取られて
+いることです。
+
+### 6. 必要に応じて他のスレッドを確認する
+
+NaN が特定のスレッドに限定される場合があります。比較のためにディスパッチの中央の
+スレッドをデバッグします:
+
+```json
+{
+  "tool": "debug_compute_shader",
+  "event_id": 550,
+  "group_x": 4, "group_y": 4, "group_z": 0,
+  "thread_x": 8, "thread_y": 8, "thread_z": 0
+}
+```
+
+他のスレッドでゼロ以外の `luminance` が示されて NaN がない場合、問題は輝度が
+ちょうどゼロのピクセル (暗い境界や空の領域) に限定されます。
+
+### 7. デバッグストアのステータスを確認する
+
+```json
+{ "tool": "get_shader_debug_status" }
+```
+
+レスポンス例:
+
+```json
+{
+  "debug_ids": ["dbg_ff00aa11", "dbg_a1b2c300"]
+}
+```
+
+```json
+{
+  "tool": "get_shader_debug_status",
+  "debug_id": "dbg_ff00aa11"
+}
+```
+
+```json
+{
+  "debug_id": "dbg_ff00aa11",
+  "status": "ready",
+  "stage": "compute",
+  "event_id": 550,
+  "step_count": 112,
+  "truncated": false
+}
+```
+
+---
+
+## 根本原因まとめ
 
 | ステップ | 変数 | 値 | 観察 |
 |---|---|---|---|
@@ -51,15 +205,10 @@
 | 48 | `tone_factor` | NaN  | Inf に対する下流の算術演算 |
 
 修正: `log` 呼び出しの前に `epsilon` が非ゼロの定数に初期化されていることを確認します。
-これは通常、定数バッファのアップロードバグです。
+これは通常、定数バッファのアップロードバグです — ユニフォームが設定されていないか
+ゼロにされています。
 
-## 結果の解釈
-
-最初の NaN ステップが根本原因で、それ以降のステップの NaN フラグはすべてその結果です。
-NaN ステップの*前*の変数値を読み、問題の結果をもたらした入力の組み合わせを特定してください。
-超越関数(`log`、`sqrt`、`rcp`)に対するゼロ除算ガードが欠けていることは、このクラスの
-バグの最も一般的な原因です。イプシロン値を含むはずの定数バッファが毎フレーム正しくアップ
-ロードされているか確認してください。
+---
 
 ## 制限事項
 

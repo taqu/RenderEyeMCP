@@ -14,40 +14,39 @@
 
 ## プロンプト例
 
-**クイック調査:**
 > RenderDocで今開いているCaptureを調べて、使っているGraphics API、キャプチャされた
 > Frame、選択中のEventを教えてください。
 
-**詳細な調査:**
-> RenderDocで開いているCaptureの全体像を教えてください。Graphics API、GPU、Frame番号、
-> 総Event数、DrawCall数、Dispatch数を確認してください。さらに、現在選択中のEventの
-> 名前とEvent IDも教えてください。
+## 調査の流れ
 
-## 調査内容
+1. **GUIセッションの検出** — `list_renderdoc_sessions` / `get_current_capture`:
+   どのRenderDocウィンドウが接続していて、それぞれ何を読み込んでいるか。
+2. **Captureの特定** — `get_current_capture_info`: API、GPUベンダー、Frame番号、
+   Event/DrawCall/Dispatchの数。
+3. **選択中のEvent** — `get_selected_event`: 選択したEIDとAPI呼び出し。
+4. 必要なら`list_capture_events`(`flags_filter: drawcall`)で全体像をつかむ。
 
-- どのRenderDocウィンドウが接続していて、それぞれ何のCaptureを読み込んでいるか
-- 読み込まれたCaptureのGraphics API、GPUベンダー、Frame番号、統計サマリー(総Event数、DrawCall数、Dispatch数)
-- Event Browserで現在選択されているEventのIDとAPI呼び出し名
+## 確認できること
 
-## 期待される結果
+- `.rdc`ファイルのパス付きの`status: loaded`。
+- `D3D12`などの`api`、`frame_number`、
+  `{"total_events": 2370, "draw_calls": 533, "dispatches": 17}`のような`statistics`。
+- RenderDocでハイライトされているEIDと一致する`selected_event_id`と、
+  `ID3D12GraphicsCommandList::DrawIndexedInstanced()`のような名前。
 
-- ロード状態と`.rdc`ファイルのパス
-- `D3D12`などの`api`、Frame番号、`{"total_events": 2370, "draw_calls": 533, "dispatches": 17}`のような統計値
-- RenderDocでハイライトされているEIDと一致するSelected Event IDと`ID3D12GraphicsCommandList::DrawIndexedInstanced()`のような名前
-
-## 結果の解釈
+## 解釈
 
 エージェント → MCPサーバー → 共有サービス → 拡張機能 → あなたのRenderDocウィンドウ、
 という経路全体が動いていることを確認できます。選択中のEventがマーカーや`Present`だと、
 以降のシナリオでは「Shaderが未Bind」になります。先に進む前にDrawCallを選択してください。
 
-## 制限事項
+## 制限
 
 - 複数のRenderDocウィンドウが接続していると、エージェントはどれかを選ぶ必要があります
   (`status: ambiguous`)。どのCaptureのことか伝えてください。
 - Captureによっては`capture_time`が`0`になります。
 
-## 関連ツール
+## 関連Tool
 
 `list_renderdoc_sessions`、`get_renderdoc_session_state`、`get_current_capture`、
 `get_current_capture_info`、`get_selected_event`、`list_capture_events` —

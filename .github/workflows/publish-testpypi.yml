@@ -1,0 +1,166 @@
+name: Publish to TestPyPI
+
+# Triggered by test-release tags matching vMAJOR.MINOR.PATCH-test.N.
+# The classify job validates the exact format and rejects everything that is
+# not a test release. Production tags (vMAJOR.MINOR.PATCH) and invalid tags
+# cause the workflow to fail before any build or publish step runs.
+#
+# This workflow publishes EXCLUSIVELY to TestPyPI (https://test.pypi.org/legacy/).
+# It never contains a production PyPI publishing job.
+# Trusted Publisher registration: workflow=publish-testpypi.yml, environment=testpypi
+on:
+  push:
+    tags:
+      - "v*-test.*"
+
+# Prevent duplicate publishes for the same tag. Do not cancel once a publishing
+# job may have started — TestPyPI does not allow replacing an uploaded distribution.
+concurrency:
+  group: publish-testpypi-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # CLASSIFY: validate the Git tag is a test release.
+  # Rejects production tags (v*) and any other non-test tag.
+  # Outputs the normalized PEP 440 version (e.g. 1.0.0.dev1).
+  # ──────────────────────────────────────────────────────────────────────────
+  classify:
+    name: Validate Test Tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.cls.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - name: Install dependencies
+        run: uv sync
+      - name: Classify tag
+        id: cls
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          echo "Tag: $TAG"
+          uv run python scripts/classify_tag.py --gha "$TAG"
+          uv run python scripts/classify_tag.py "$TAG"
+      - name: Reject non-test tags
+        shell: bash
+        run: |
+          KIND="${{ steps.cls.outputs.kind }}"
+          TAG="${GITHUB_REF#refs/tags/}"
+          if [ "$KIND" != "test" ]; then
+            echo "ERROR: Tag '$TAG' is not a test tag (kind=$KIND)."
+            echo "  Test tags must match vMAJOR.MINOR.PATCH-test.N (e.g. v1.0.0-test.1, N >= 1)."
+            echo "  Production tags (v*) must use the publish-pypi.yml workflow."
+            exit 1
+          fi
+          echo "Test tag confirmed: $TAG -> ${{ steps.cls.outputs.version }}"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # BUILD: build and validate the test Python distributions.
+  # Injects the normalized dev version (e.g. 1.0.0.dev1) into source files.
+  # These changes are NOT committed — they exist only in this CI workspace.
+  # Runs only after classify confirms a test tag.
+  # ──────────────────────────────────────────────────────────────────────────
+  build:
+    name: Build Distributions
+    needs: [classify]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync
+
+      # Inject the normalized dev version (e.g. 1.0.0.dev1) into source files.
+      - name: Inject test version into source files
+        shell: bash
+        run: |
+          uv run python scripts/set_build_version.py "${{ needs.classify.outputs.version }}"
+
+      - name: Build wheel and source distribution
+        run: uv build
+
+      - name: Verify built distribution version matches expected
+        shell: bash
+        run: |
+          EXPECTED="${{ needs.classify.outputs.version }}"
+          WHL=$(ls dist/*.whl | head -1)
+          ACTUAL=$(python -c "
+          whl = '$WHL'.replace('\\\\', '/').split('/')[-1]
+          print(whl.split('-')[1])
+          ")
+          echo "Expected version: $EXPECTED"
+          echo "Wheel version:    $ACTUAL"
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "ERROR: Version mismatch — aborting before upload."
+            exit 1
+          fi
+
+      - name: Validate distributions with twine
+        run: uvx twine check dist/*.whl dist/*.tar.gz
+
+      - name: Install wheel in clean venv (smoke test)
+        shell: bash
+        run: |
+          python -m venv build-verify-env
+          build-verify-env/bin/pip install --upgrade pip --quiet
+          build-verify-env/bin/pip install dist/*.whl --quiet
+          build-verify-env/bin/python -c "
+          import rendereye_mcp
+          expected = '${{ needs.classify.outputs.version }}'
+          actual   = rendereye_mcp.__version__
+          assert actual == expected, f'Version mismatch: {actual!r} != {expected!r}'
+          print('Installed version OK:', actual)
+          "
+          build-verify-env/bin/python -c "from rendereye_mcp.__main__ import main; print('Entry point OK')"
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-dist-${{ needs.classify.outputs.version }}
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+          retention-days: 7
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # PUBLISH TO TESTPYPI: test tags only.
+  # Uses the "testpypi" GitHub Environment and OIDC Trusted Publishing.
+  # This is the only publishing job in this workflow — production PyPI is handled
+  # exclusively by publish-pypi.yml.
+  # ──────────────────────────────────────────────────────────────────────────
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: [classify, build]
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/rendereye-mcp/${{ needs.classify.outputs.version }}
+    permissions:
+      id-token: write   # Required for OIDC Trusted Publishing — granted only here
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-dist-${{ needs.classify.outputs.version }}
+          path: dist/
+      - name: Final test guard
+        shell: bash
+        run: |
+          VERSION="${{ needs.classify.outputs.version }}"
+          # Confirm the version looks like a dev release (contains .dev)
+          if ! echo "$VERSION" | grep -q '\.dev'; then
+            echo "ERROR: Version '$VERSION' does not look like a test release — aborting."
+            exit 1
+          fi
+          echo "Publishing version $VERSION to TestPyPI."
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/

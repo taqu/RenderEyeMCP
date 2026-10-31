@@ -11,7 +11,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/taqu/rendereye-mcp/internal/captures"
 	"github.com/taqu/rendereye-mcp/internal/config"
 )
 
@@ -24,7 +23,6 @@ type Server struct {
 	router *Router
 	auth   *Auth
 
-	capDirs  []string
 	listener net.Listener
 	connWG   sync.WaitGroup
 	// connCount tracks active connections for limit enforcement.
@@ -36,21 +34,16 @@ func New(cfg *config.Config) (*Server, string) {
 	auth := NewAuth()
 	serviceInstanceID := generateInstanceID()
 	router := NewRouter(serviceInstanceID, auth)
-	capDirs := parseCaptureDirectories()
 	return &Server{
 		cfg:    cfg,
 		router: router,
 		auth:   auth,
-		capDirs: capDirs,
 	}, serviceInstanceID
 }
 
 // Start binds the TCP listener, writes the ready file, and begins accepting
 // connections.  It blocks until ctx is cancelled.
 func (s *Server) Start(ctx context.Context) error {
-	// Initialise capture registry and session manager.
-	s.router.InitSubsystems(ctx, s.capDirs)
-
 	addr := fmt.Sprintf("%s:%d", s.cfg.IPCHost, s.cfg.IPCPort)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -135,12 +128,5 @@ func newUUID() string {
 
 func currentPID() int {
 	return os.Getpid()
-}
-
-// parseCaptureDirectories reads the RENDEREYE_CAPTURE_DIRS env var and returns
-// the parsed list of directories (or nil for defaults).
-func parseCaptureDirectories() []string {
-	env := os.Getenv("RENDEREYE_CAPTURE_DIRS")
-	return captures.ParseCaptureDirectories(env)
 }
 
