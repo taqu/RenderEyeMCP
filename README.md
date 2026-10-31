@@ -166,9 +166,9 @@ go test ./...
 go vet ./...
 go build ./cmd/rendereye-mcp/
 
-# Python extension (RenderDoc extension only)
-uv sync
-uv run pytest tests/
+# Extension tests (RenderDoc extension only)
+pip install pytest
+pytest tests/extensions/ -v
 ```
 
 ## License

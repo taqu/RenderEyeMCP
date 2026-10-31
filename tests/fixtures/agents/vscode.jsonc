@@ -1,9 +1,0 @@
-// Preserve this comment.
-{
-  "inputs": [{"id": "test", "type": "promptString", "description": "日本語",},],
-  "future": {"url": "https://example.invalid/*literal*/",},
-  "servers": {
-    // Other server and environment remain untouched.
-    "other": {"command": "C:\\Program Files\\Other\\server.exe", "env": {"TEST": "test-only"},},
-  },
-}

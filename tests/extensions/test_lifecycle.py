@@ -99,17 +99,6 @@ def test_worker_shutdown_during_reconnect():
     assert not worker.is_alive()
 
 
-def test_source_and_wheel_resources_identical():
-    root = Path(__file__).resolve().parents[2]
-    for source in (root / "extensions/rendereye").glob("*"):
-        if source.suffix not in (".py", ".json"):
-            continue
-        name = "rendereye_init.py" if source.name == "__init__.py" else source.name
-        assert (
-            source.read_bytes() == (root / "src/rendereye_mcp/_extension_data" / name).read_bytes()
-        )
-
-
 def test_registration_from_non_gui_thread(context, fake_ipc):
     errors = []
 
