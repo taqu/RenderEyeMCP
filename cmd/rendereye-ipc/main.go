@@ -1,6 +1,6 @@
 // rendereye-ipc is the standalone Go Shared IPC Service for RenderEyeMCP.
 //
-// It accepts TCP connections from Python MCP Bridges and RenderDoc Extensions,
+// It accepts TCP connections from Go MCP Bridges and RenderDoc Extensions,
 // routes tool calls from bridges to extensions via the inspect_capture protocol,
 // and returns results to the originating bridges.
 //
