@@ -11,62 +11,6 @@ permissions:
   contents: read
 
 jobs:
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Install dev dependencies
-        run: uv sync --dev
-      - name: Run ruff
-        run: uv run ruff check src/ tests/
-      - name: Check documentation links and translations
-        run: uv run python scripts/check_docs.py
-
-  test:
-    name: Test (${{ matrix.os }} / Python ${{ matrix.python-version }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest]
-        python-version: ["3.11", "3.12"]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install dependencies
-        run: uv sync --dev
-      - name: Run tests
-        run: uv run pytest tests/ -v --tb=short
-
-  build-check:
-    name: Build Check (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [windows-latest, ubuntu-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
-      - name: Build wheel and sdist
-        run: uv build
-      - name: Check distributions with twine
-        shell: bash
-        run: uvx twine check dist/*.whl dist/*.tar.gz
-      - name: Validate version consistency
-        run: uv run python scripts/validate_release.py --check-versions
-      - name: Upload distributions
-        uses: actions/upload-artifact@v4
-        with:
-          name: python-dist-${{ matrix.os }}
-          path: dist/
-          retention-days: 7
-
   go-probe:
     name: Go Protocol Probe (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

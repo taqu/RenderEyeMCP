@@ -1,4 +1,4 @@
-name: Release
+name: Release Go Binary
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: 'Publish GitHub Release (false = dry run)'
+        description: 'Publish GitHub Release (false = dry run / artifacts only)'
         type: boolean
         default: false
 
@@ -16,234 +16,315 @@ permissions:
   contents: read
 
 jobs:
-  validate:
-    name: Validate Version
+  # ── Extract version ─────────────────────────────────────────────────────────
+  version:
+    name: Extract Version
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.ver.outputs.version }}
-      tag: ${{ steps.ver.outputs.tag }}
+      tag:     ${{ steps.ver.outputs.tag }}
+      commit:  ${{ steps.ver.outputs.commit }}
+      date:    ${{ steps.ver.outputs.date }}
       is_prerelease: ${{ steps.ver.outputs.is_prerelease }}
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
-      - name: Install dependencies
-        run: uv sync
-      - name: Extract version
+        with:
+          fetch-depth: 0
+
+      - name: Extract metadata
         id: ver
         shell: bash
         run: |
-          VERSION=$(python -c "import sys; sys.path.insert(0,'src'); from rendereye_mcp import __version__; print(__version__)")
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          # Version comes from pyproject.toml (single source of truth).
+          VERSION=$(grep -m1 'version\s*=' pyproject.toml | sed 's/.*=\s*"\(.*\)"/\1/')
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "version=$VERSION"  >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION"     >> "$GITHUB_OUTPUT"
+          echo "commit=$COMMIT"    >> "$GITHUB_OUTPUT"
+          echo "date=$DATE"        >> "$GITHUB_OUTPUT"
           if [[ "$VERSION" == *"-"* ]]; then
-            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=true"  >> "$GITHUB_OUTPUT"
           else
             echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "Package version: $VERSION"
-      - name: Validate version consistency
-        run: uv run python scripts/validate_release.py --check-versions
-      - name: Validate tag matches version
-        if: startsWith(github.ref, 'refs/tags/')
-        shell: bash
-        run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          uv run python scripts/validate_release.py --tag "$TAG"
+          echo "Version: $VERSION  Commit: $COMMIT  Date: $DATE"
 
+  # ── Go tests ────────────────────────────────────────────────────────────────
   test:
-    name: Test (${{ matrix.os }} / Python ${{ matrix.python-version }})
-    needs: validate
+    name: Go Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    needs: version
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest]
-        python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
+      - uses: actions/setup-go@v5
         with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install dependencies
-        run: uv sync --dev
-      - name: Run tests
-        run: uv run pytest tests/ -v --tb=short
-      - name: Run lint
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
-        run: uv run ruff check src/ tests/
+          go-version: "1.22"
+      - name: Run Go tests
+        run: go test ./...
+      - name: Run Go vet
+        run: go vet ./...
 
+  # ── Cross-compile and package ────────────────────────────────────────────────
   build:
-    name: Build Distributions
-    needs: [validate, test]
-    runs-on: ubuntu-latest
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ${{ matrix.runner }}
+    needs: [version, test]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+            runner: windows-latest
+            ext: .exe
+            archive: zip
+          - goos: windows
+            goarch: arm64
+            runner: windows-latest
+            ext: .exe
+            archive: zip
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-latest
+            ext: ""
+            archive: tar.gz
+          - goos: linux
+            goarch: arm64
+            runner: ubuntu-latest
+            ext: ""
+            archive: tar.gz
+          - goos: darwin
+            goarch: arm64
+            runner: macos-latest
+            ext: ""
+            archive: tar.gz
+
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
-      - name: Build wheel and sdist
-        run: uv build
-      - name: Check distributions with twine
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Build rendereye-mcp
         shell: bash
-        run: uvx twine check dist/*.whl dist/*.tar.gz
-      - name: Assemble release package bundle
-        run: uv run python scripts/create_release_package.py
-      - name: Create release archives
-        shell: bash
-        run: uv run python scripts/build_release.py --create-archives --version ${{ needs.validate.outputs.version }}
-      - name: Generate checksums
+        env:
+          GOOS:   ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          VERSION="${{ needs.version.outputs.version }}"
+          COMMIT="${{ needs.version.outputs.commit }}"
+          DATE="${{ needs.version.outputs.date }}"
+          LDFLAGS="-s -w \
+            -X github.com/taqu/rendereye-mcp/internal/version.Version=${VERSION} \
+            -X github.com/taqu/rendereye-mcp/internal/version.GitCommit=${COMMIT} \
+            -X github.com/taqu/rendereye-mcp/internal/version.BuildDate=${DATE}"
+          go build -ldflags "$LDFLAGS" -o "rendereye-mcp${{ matrix.ext }}" ./cmd/rendereye-mcp/
+
+      - name: Verify version output
         shell: bash
         run: |
-          uv run python scripts/generate_checksums.py \
-            --output dist/packages/SHA256SUMS.txt \
-            dist/*.whl \
-            dist/*.tar.gz \
-            dist/packages/RenderEyeMCP-v${{ needs.validate.outputs.version }}.zip \
-            dist/packages/RenderEyeMCP-Extension-v${{ needs.validate.outputs.version }}.zip
-      - name: Upload release artifacts
+          if [[ "${{ matrix.goos }}" == "$GOOS" ]] || [[ "${{ matrix.goos }}" == "$(go env GOOS)" ]]; then
+            ./rendereye-mcp${{ matrix.ext }} version
+          else
+            echo "Cross-compiled binary — skipping native version check"
+          fi
+
+      - name: Assemble archive contents
+        shell: bash
+        run: |
+          VERSION="${{ needs.version.outputs.version }}"
+          ARCHIVE_NAME="rendereye-mcp_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}"
+          mkdir -p "$ARCHIVE_NAME/extension"
+          cp "rendereye-mcp${{ matrix.ext }}" "$ARCHIVE_NAME/"
+          cp -r extensions/rendereye/. "$ARCHIVE_NAME/extension/"
+          if [[ "${{ matrix.goos }}" == "windows" ]]; then
+            cp scripts/install.ps1 "$ARCHIVE_NAME/"
+          else
+            cp scripts/install.sh "$ARCHIVE_NAME/"
+            chmod +x "$ARCHIVE_NAME/install.sh"
+          fi
+          # README and LICENSE
+          if [[ -f README.md ]]; then cp README.md "$ARCHIVE_NAME/"; fi
+          if [[ -f LICENSE ]];    then cp LICENSE   "$ARCHIVE_NAME/"; fi
+          echo "$ARCHIVE_NAME" > archive_name.txt
+
+      - name: Create archive (zip)
+        if: matrix.archive == 'zip'
+        shell: bash
+        run: |
+          ARCHIVE_NAME=$(cat archive_name.txt)
+          cd "$ARCHIVE_NAME" && zip -r "../${ARCHIVE_NAME}.zip" . && cd ..
+
+      - name: Create archive (tar.gz)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          ARCHIVE_NAME=$(cat archive_name.txt)
+          tar -czf "${ARCHIVE_NAME}.tar.gz" "$ARCHIVE_NAME/"
+
+      - name: Generate checksum
+        shell: bash
+        run: |
+          ARCHIVE_NAME=$(cat archive_name.txt)
+          EXT="${{ matrix.archive }}"
+          FILE="${ARCHIVE_NAME}.${EXT}"
+          if command -v sha256sum &>/dev/null; then
+            sha256sum "$FILE" > "${FILE}.sha256"
+          else
+            shasum -a 256 "$FILE" > "${FILE}.sha256"
+          fi
+          cat "${FILE}.sha256"
+
+      - name: Verify archive contents
+        shell: bash
+        run: |
+          ARCHIVE_NAME=$(cat archive_name.txt)
+          EXT="${{ matrix.archive }}"
+          if [[ "$EXT" == "zip" ]]; then
+            unzip -l "${ARCHIVE_NAME}.zip" | grep -q "rendereye-mcp"
+          else
+            tar -tzf "${ARCHIVE_NAME}.tar.gz" | grep -q "rendereye-mcp"
+          fi
+          echo "Archive verification passed"
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: release-artifacts-${{ needs.validate.outputs.version }}
+          name: go-release-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
-            dist/*.whl
-            dist/*.tar.gz
-            dist/packages/RenderEyeMCP-v*.zip
-            dist/packages/RenderEyeMCP-Extension-v*.zip
-            dist/packages/SHA256SUMS.txt
+            rendereye-mcp_*.${{ matrix.archive }}
+            rendereye-mcp_*.sha256
           retention-days: 30
 
-  verify:
-    name: Verify Release Artifacts
-    needs: [validate, build]
+  # ── Collect all checksums ────────────────────────────────────────────────────
+  checksums:
+    name: Collect Checksums
     runs-on: ubuntu-latest
+    needs: [version, build]
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          name: release-artifacts-${{ needs.validate.outputs.version }}
-          path: release-artifacts/
-      - name: Verify artifacts
-        run: |
-          uv run python scripts/validate_release.py \
-            --artifacts-dir release-artifacts/ \
-            --version ${{ needs.validate.outputs.version }}
-      - name: Install wheel in clean venv (no uv)
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Verify pip installation
+          pattern: go-release-*
+          merge-multiple: true
+          path: artifacts/
+
+      - name: Generate combined SHA256SUMS
         shell: bash
         run: |
-          python -m venv release-verify-env
-          release-verify-env/bin/pip install --upgrade pip
-          release-verify-env/bin/pip install release-artifacts/*.whl
-          release-verify-env/bin/python -c "import rendereye_mcp; assert rendereye_mcp.__version__ == '${{ needs.validate.outputs.version }}', f'Version mismatch: {rendereye_mcp.__version__}'; print('Version OK:', rendereye_mcp.__version__)"
-          release-verify-env/bin/python -c "from rendereye_mcp.__main__ import main; print('Entry point: OK')"
+          cd artifacts
+          cat *.sha256 > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
+      - name: Upload combined checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-release-checksums
+          path: artifacts/SHA256SUMS.txt
+          retention-days: 30
+
+  # ── Publish GitHub Release ───────────────────────────────────────────────────
   release:
     name: Publish GitHub Release
-    needs: [validate, test, build, verify]
     runs-on: ubuntu-latest
+    needs: [version, build, checksums]
     permissions:
       contents: write
-    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish == true)
+    if: >
+      startsWith(github.ref, 'refs/tags/') ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish == true)
     steps:
       - uses: actions/checkout@v4
-      - name: Download release artifacts
+
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          name: release-artifacts-${{ needs.validate.outputs.version }}
+          pattern: go-release-*
+          merge-multiple: true
           path: release-artifacts/
-      - name: Verify expected assets are present
+
+      - name: List artifacts
         shell: bash
-        run: |
-          VERSION="${{ needs.validate.outputs.version }}"
-          MISSING=0
-          for f in \
-            "release-artifacts/rendereye_mcp-${VERSION}-py3-none-any.whl" \
-            "release-artifacts/rendereye_mcp-${VERSION}.tar.gz" \
-            "release-artifacts/RenderEyeMCP-v${VERSION}.zip" \
-            "release-artifacts/RenderEyeMCP-Extension-v${VERSION}.zip" \
-            "release-artifacts/SHA256SUMS.txt"; do
-            if [[ ! -f "$f" ]]; then
-              echo "MISSING: $f"
-              MISSING=1
-            else
-              echo "OK: $f"
-            fi
-          done
-          [[ $MISSING -eq 0 ]] || exit 1
+        run: ls -lh release-artifacts/
+
       - name: Check release does not already exist
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="${{ needs.validate.outputs.tag }}"
-          if gh release view "$TAG" &>/dev/null; then
-            echo "ERROR: Release $TAG already exists. Delete it first or use a new tag."
+          TAG="${{ needs.version.outputs.tag }}"
+          if gh release view "$TAG" &>/dev/null 2>&1; then
+            echo "ERROR: Release $TAG already exists."
             exit 1
           fi
           echo "No existing release for $TAG — proceeding."
+
       - name: Generate release notes
-        id: notes
         shell: bash
         run: |
-          VERSION="${{ needs.validate.outputs.version }}"
-          TAG="${{ needs.validate.outputs.tag }}"
+          VERSION="${{ needs.version.outputs.version }}"
+          TAG="${{ needs.version.outputs.tag }}"
           cat > release-notes.md <<EOF
-          ## RenderEyeMCP ${TAG}
+          ## RenderEyeMCP ${TAG} (Go Native Binary)
 
-          MCP server bridging AI assistants to RenderDoc GPU frame debugger.
+          Native MCP server bridging AI assistants to RenderDoc GPU frame debugger.
+          No Python, uv, pip, or Go required to run.
 
-          ### Installation
+          ### Quick Start (Windows)
 
-          **Recommended:** Download \`RenderEyeMCP-v${VERSION}.zip\` and follow \`INSTALL-MANUAL.md\`.
-
-          ```bash
-          pip install rendereye_mcp-${VERSION}-py3-none-any.whl
-          ```
+          1. Download \`rendereye-mcp_${VERSION}_windows_amd64.zip\`
+          2. Extract and run \`install.ps1\` (or place \`rendereye-mcp.exe\` manually)
+          3. Configure Claude Code:
+             \`\`\`json
+             { "mcpServers": { "rendereye": { "command": "C:\\\\Tools\\\\RenderEyeMCP\\\\rendereye-mcp.exe" } } }
+             \`\`\`
+          4. Open a RenderDoc capture and ask your agent to inspect it.
 
           ### Artifacts
 
-          | File | Description |
-          |------|-------------|
-          | \`RenderEyeMCP-v${VERSION}.zip\` | Complete release bundle (wheel + extension + examples) |
-          | \`RenderEyeMCP-Extension-v${VERSION}.zip\` | RenderDoc extension only |
-          | \`rendereye_mcp-${VERSION}-py3-none-any.whl\` | Python wheel |
-          | \`rendereye_mcp-${VERSION}.tar.gz\` | Source distribution |
-          | \`SHA256SUMS.txt\` | Checksums for all artifacts |
+          | File | Platform |
+          |------|----------|
+          | \`rendereye-mcp_${VERSION}_windows_amd64.zip\` | Windows x64 |
+          | \`rendereye-mcp_${VERSION}_windows_arm64.zip\` | Windows ARM64 |
+          | \`rendereye-mcp_${VERSION}_linux_amd64.tar.gz\` | Linux x64 |
+          | \`rendereye-mcp_${VERSION}_linux_arm64.tar.gz\` | Linux ARM64 |
+          | \`rendereye-mcp_${VERSION}_darwin_arm64.tar.gz\` | macOS Apple Silicon |
+          | \`SHA256SUMS.txt\` | Checksums |
 
-          ### Requirements
+          ### Platform Support
 
-          - Python 3.11 or later
-          - RenderDoc 1.x (Windows or Linux)
-          - No \`uv\` required for installation
+          | Platform | Binary | IPC | MCP | RenderDoc Integration |
+          |---|---|---|---|---|
+          | Windows amd64 | ✓ | ✓ | ✓ | Primary target |
+          | Windows arm64 | ✓ compiled | requires testing | requires testing | requires testing |
+          | Linux amd64 | ✓ | ✓ | ✓ | requires RenderDoc |
+          | Linux arm64 | ✓ compiled | requires testing | requires testing | requires testing |
+          | macOS arm64 | ✓ compiled | requires testing | RenderDoc unavailable | not supported |
 
-          ### Supported Platforms
-
-          - **Windows** — primary target, fully tested
-          - **Linux** — supported where RenderDoc is available
-
-          See the [installation guide](https://github.com/${{ github.repository }}/blob/main/docs/en/installation.md) ([日本語](https://github.com/${{ github.repository }}/blob/main/docs/ja/installation.md)) for full instructions.
+          See [docs/en/installation.md](https://github.com/${{ github.repository }}/blob/main/docs/en/installation.md) for full instructions.
           EOF
-          echo "Generated release notes"
+
       - name: Publish GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION="${{ needs.validate.outputs.version }}"
-          TAG="${{ needs.validate.outputs.tag }}"
-          PRERELEASE="${{ needs.validate.outputs.is_prerelease }}"
+          VERSION="${{ needs.version.outputs.version }}"
+          TAG="${{ needs.version.outputs.tag }}"
+          PRERELEASE="${{ needs.version.outputs.is_prerelease }}"
           PRERELEASE_FLAG=""
           [[ "$PRERELEASE" == "true" ]] && PRERELEASE_FLAG="--prerelease"
           gh release create "$TAG" \
             --title "RenderEyeMCP $TAG" \
             --notes-file release-notes.md \
             $PRERELEASE_FLAG \
-            "release-artifacts/rendereye_mcp-${VERSION}-py3-none-any.whl" \
-            "release-artifacts/rendereye_mcp-${VERSION}.tar.gz" \
-            "release-artifacts/RenderEyeMCP-v${VERSION}.zip" \
-            "release-artifacts/RenderEyeMCP-Extension-v${VERSION}.zip" \
-            "release-artifacts/SHA256SUMS.txt"
+            release-artifacts/*.zip \
+            release-artifacts/*.tar.gz \
+            release-artifacts/SHA256SUMS.txt
           echo "Release published: $(gh release view "$TAG" --json url -q .url)"
