@@ -11,32 +11,38 @@ or vanishes only in some views.
 
 Select the draw call of the object that is wrongly hidden.
 
-## Example prompt
+## Example prompts
 
+**Quick investigation:**
 > Inspect the depth state of the selected draw call and the associated depth texture.
 > Check the depth comparison function, depth writes, and relevant depth pixel values.
 
 The agent will find that the comparison function and depth writes are **not available**
 (see Limitations) and should say so; the remaining checks still give useful evidence.
 
-## Investigation workflow
+**Detailed investigation:**
+> The selected object is not appearing when it should be in front of other geometry.
+> Inspect the bound depth render target: its format, size, and whether it matches the
+> color target and viewport. Read the viewport depth range. Then sample depth values at
+> several pixel coordinates on the object and around it, and describe whether the values
+> are consistent with reversed-Z or standard depth convention. Identify any abnormality
+> that could explain why the object is being rejected.
 
-1. `get_pipeline_state` `depth_stencil` — returns a note that depth/stencil state is not
-   exposed.
-2. `get_render_targets` (or `output_merger`) — the bound depth target: `resource_id`,
-   format (e.g. `D32_FLOAT`, `R32_TYPELESS`), size.
-3. `get_pipeline_state` `rasterizer` — viewport `min_depth`/`max_depth`.
-4. `get_texture_statistics` on the depth target — overall depth range.
-5. `get_pixel_value` with `coords` at points on the object and around it.
+## What the agent should investigate
 
-## Expected observations
+- The bound depth render target: resource ID, format (such as D32_FLOAT or R32_TYPELESS), and whether its dimensions match the color target and viewport
+- The viewport depth range (min_depth and max_depth)
+- Overall depth statistics across the target — the minimum and maximum depth values present
+- Sampled depth values at specific pixel coordinates on and around the object
 
-- A bound depth target whose size matches the color target and viewport, or a mismatch.
-- Viewport depth range, usually `0.0 – 1.0`.
-- Depth statistics, e.g. `min 0.0, max 0.025` — a tight range typical of reversed-Z.
-- Depth values at specific pixels, e.g. `0.00107` at the object's center.
+## Expected results
 
-## Interpretation
+- A bound depth target whose size matches the color target and viewport, or a mismatch
+- Viewport depth range, usually `0.0 – 1.0`
+- Depth statistics, e.g. `min 0.0, max 0.025` — a tight range typical of reversed-Z
+- Depth values at specific pixels, e.g. `0.00107` at the object's center
+
+## How to interpret the results
 
 - **No depth target bound** while the object relies on depth testing → wrong pass setup.
 - **Size mismatch** between depth target and color target/viewport → depth tests

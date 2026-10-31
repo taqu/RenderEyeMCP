@@ -13,33 +13,34 @@ Roughness、UVスケールなど)が想定と違います。
 
 ## プロンプト例
 
+**クイック調査:**
 > 選択中のDrawCallで使われているPixel Shaderを調べてください。TextureとSamplerの
 > Bindingを一覧し、実際にBindされているリソースを特定して、関係するマテリアルの定数を
 > 確認してください。
 
-## 調査の流れ
+**詳細な調査:**
+> 選択中のDrawCallが間違った外観のマテリアルをレンダリングしています。Pixel Shaderの
+> 全リソースBindingを調べてください: 宣言された各Textureスロットについて、リソースが
+> 実際にバインドされているか、バインドされている場合はその名前・フォーマット・サイズを
+> 報告してください。次にマテリアルのConstant Bufferを読んで、Shader Reflectionから
+> 得た名前でデコードしてください。欠損している、プレースホルダーがバインドされている、
+> または想定外の値を持つバインディングを特定してください。
 
-1. `list_shaders` — Pixel ShaderがBindされていることを確認し、IDを得る。
-2. `get_shader_reflection`(`stage: Pixel`、`section: resources`、続いて`cbuffers`) —
-   Shaderが*宣言*しているもの: Texture/Samplerの名前とスロット、Constant Bufferの変数と
-   バイトオフセット、型。
-3. `get_shader_bindings`(`stage: Pixel`) — 宣言ごとに*実際に*何かがBindされているかと
-   その`resource_id`。Constant Bufferは`byte_offset`と`byte_size`も。
-4. Bindされた各Textureに`get_texture_info` / `get_resource_info` — 名前、サイズ、
-   フォーマット、Mip数。
-5. 各Constant Bufferを`byte_offset`から`read_buffer_data`し、Reflectionの変数から
-   組み立てた`decode_layout`でデコードする(`float4`なら`float32`×4など)。
-6. 必要なら、`get_texture_image`でBindされたTextureを表示する。
+## 調査内容
 
-## 確認できること
+- どのPixel Shaderがバインドされているか、それが宣言しているリソース(TextureとSamplerのスロット、変数名とオフセットを含むConstant Bufferのレイアウト)
+- 宣言された各リソーススロットに実際に何かバインドされているか(リソースID、利用可能な場合は名前、フォーマット、次元)
+- Reflectionの変数名と型を使ってデコードしたConstant Bufferの内容
 
-- 宣言名(例: t0の`AlbedoMap`)と、Bindされたリソースとその名前
-  (例: `/textures/rock_albedo`)の対応表。
-- 欠けているものは`bound: false` / `resource_id: null`。
+## 期待される結果
+
+- 宣言名(例: t0の`AlbedoMap`)とバインドされたリソースとその名前
+  (例: `/textures/rock_albedo`)の対応表
+- 欠けているものは`bound: false` / `resource_id: null`
 - Reflectionの名前と並んだ定数のデコード値。例:
-  `BaseColorTint = [1.0, 0.5, 0.5, 1.0]`。
+  `BaseColorTint = [1.0, 0.5, 0.5, 1.0]`
 
-## 解釈
+## 結果の解釈
 
 - **宣言があるのに未Bind** → エンジンがそのスロットを設定していません。GPUはNullか
   古いディスクリプタを読んでいます。
@@ -51,7 +52,7 @@ Roughness、UVスケールなど)が想定と違います。
 これらはDrawCall 1つについての観察です。値が*間違い*かどうかは、マテリアルが本来
 持つべき内容によります。期待値がわかっていれば、エージェントに伝えてください。
 
-## 制限
+## 制限事項
 
 - Samplerステートの詳細(フィルタリング、アドレッシング)は、Reflectionの宣言の範囲に
   限られます。
@@ -61,7 +62,7 @@ Roughness、UVスケールなど)が想定と違います。
   あります。
 - 読み出しは1回あたり16384バイト、デコードは100要素までです。
 
-## 関連Tool
+## 関連ツール
 
 `list_shaders`、`get_shader_info`、`get_shader_reflection`、`get_shader_bindings`、
 `get_texture_info`、`get_resource_info`、`read_buffer_data`、`get_texture_image` —

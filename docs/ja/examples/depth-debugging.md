@@ -13,34 +13,39 @@
 
 ## プロンプト例
 
+**クイック調査:**
 > 選択中のDrawCallの深度の状態と、関連するDepth Textureを調べてください。深度比較関数、
 > 深度書き込み、関係する深度のPixel値を確認してください。
 
-比較関数と深度書き込みは**取得できない**ため(制限を参照)、エージェントはそのことを
+比較関数と深度書き込みは**取得できない**ため(制限事項を参照)、エージェントはそのことを
 伝えるはずです。それ以外の確認でも有用な根拠が得られます。
 
-## 調査の流れ
+**詳細な調査:**
+> 選択中のオブジェクトが他のジオメトリの前にあるはずなのに表示されていません。
+> バインドされているDepth Render Targetを調べてください: フォーマット、サイズ、
+> Color TargetおよびViewportと一致しているか確認してください。ViewportのDepth範囲を
+> 読んでください。オブジェクト上とその周囲の複数のPixel座標で深度値をサンプリングし、
+> Reversed-Zか標準深度規約と一致しているか説明してください。オブジェクトが棄却されている
+> 可能性のある異常を特定してください。
 
-1. `get_pipeline_state`の`depth_stencil` — Depth/Stencilステートは取得できない旨の
-   注意書きが返る。
-2. `get_render_targets`(または`output_merger`) — BindされたDepthターゲット:
-   `resource_id`、フォーマット(`D32_FLOAT`、`R32_TYPELESS`など)、サイズ。
-3. `get_pipeline_state`の`rasterizer` — Viewportの`min_depth`/`max_depth`。
-4. Depthターゲットに`get_texture_statistics` — 深度の全体的な範囲。
-5. オブジェクト上とその周囲の点を`coords`に指定して`get_pixel_value`。
+## 調査内容
 
-## 確認できること
+- バインドされているDepth Render Target: リソースID、フォーマット(D32_FLOATやR32_TYPELESSなど)、Color TargetおよびViewportと次元が一致しているか
+- Viewportの深度範囲(min_depthとmax_depth)
+- Depth Target全体の深度統計 — 存在する最小・最大深度値
+- オブジェクト上とその周囲の特定のPixel座標でサンプリングした深度値
 
-- ColorターゲットやViewportとサイズが一致する(または一致しない)Depthターゲット。
-- Viewportの深度範囲。通常は`0.0 – 1.0`。
-- 深度の統計値。例: `min 0.0, max 0.025` — Reversed-Zでよく見られる狭い範囲。
-- 特定のPixelの深度値。例: オブジェクト中央で`0.00107`。
+## 期待される結果
 
-## 解釈
+- Color TargetやViewportとサイズが一致する(または一致しない)Depth Target
+- Viewportの深度範囲。通常は`0.0 – 1.0`
+- 深度統計値。例: `min 0.0, max 0.025` — Reversed-Zでよく見られる狭い範囲
+- 特定のPixelの深度値。例: オブジェクト中央で`0.00107`
 
-- 深度テストを前提とするオブジェクトなのに**Depthターゲットが未Bind** → パスの
-  設定ミス。
-- DepthターゲットとColorターゲット/Viewportの**サイズ不一致** → 間違った領域に対して
+## 結果の解釈
+
+- 深度テストを前提とするオブジェクトなのに**Depth Targetが未Bind** → パスの設定ミス。
+- Depth TargetとColor Target/Viewportの**サイズ不一致** → 間違った領域に対して
   深度テストしている。
 - **Viewportの深度範囲**が`0..1`ではない(`0..0`など) → すべてが同じ深度になる。
 - **深度値と規約:** Reversed-Z(手前 = 1、奥 = 0)ではシーンの大半が0付近になります。
@@ -54,7 +59,7 @@
 デバッグが必要ですが、RenderEyeMCPにはありません。最後の確認にはRenderDocのPixel
 Historyを使ってください。
 
-## 制限
+## 制限事項
 
 - 深度比較関数、深度書き込みの有効/無効、Stencil、Depth Boundsのステートは取得
   できません(RenderDocのAPI共通インターフェースが提供していないため)。
@@ -62,7 +67,7 @@ Historyを使ってください。
 - Typelessの深度フォーマット(`R32_TYPELESS`)は格納されたまま報告されます。32ビット
   floatの深度では、`float`チャンネルに深度値が入っています。
 
-## 関連Tool
+## 関連ツール
 
 `get_pipeline_state`、`get_render_targets`、`get_texture_info`、
 `get_texture_statistics`、`get_pixel_value` — [Toolリファレンス](../tools.md)を参照。

@@ -12,29 +12,30 @@ You want the agent to work with *that* capture without reopening anything.
 1. RenderDoc is running with the RenderEyeMCP extension enabled.
 2. The capture is open. Select any event in the Event Browser.
 
-## Example prompt
+## Example prompts
 
+**Quick investigation:**
 > Inspect the capture currently open in RenderDoc. Tell me which graphics API it uses,
 > what frame is captured, and which event is selected.
 
-## Investigation workflow
+**Detailed investigation:**
+> Inspect the capture open in RenderDoc and give me a full overview. Identify the
+> graphics API, GPU, frame number, total event count, draw call count, and dispatch
+> count. Also tell me the name and event ID of the currently selected event.
 
-1. **GUI session discovery** — `list_renderdoc_sessions` / `get_current_capture`: which
-   RenderDoc windows are connected and which capture each one has loaded.
-2. **Capture identification** — `get_current_capture_info`: API, GPU vendor, frame
-   number, event/draw/dispatch counts.
-3. **Event selection** — `get_selected_event`: the EID and the API call you selected.
-4. Optionally `list_capture_events` with `flags_filter: drawcall` to give an overview.
+## What the agent should investigate
 
-## Expected observations
+- Which RenderDoc windows are connected and which capture each one has loaded
+- The graphics API, GPU vendor, frame number, and summary statistics (total events, draw calls, dispatches) for the loaded capture
+- The event ID and API call name of the event currently selected in the Event Browser
 
-- `status: loaded` with the path of the `.rdc` file.
-- `api` such as `D3D12`, a `frame_number`, and `statistics` such as
-  `{"total_events": 2370, "draw_calls": 533, "dispatches": 17}`.
-- `selected_event_id` matching the EID highlighted in RenderDoc, with a name like
-  `ID3D12GraphicsCommandList::DrawIndexedInstanced()`.
+## Expected results
 
-## Interpretation
+- The path of the loaded `.rdc` file with a loaded status
+- API such as `D3D12`, a frame number, and statistics such as `{"total_events": 2370, "draw_calls": 533, "dispatches": 17}`
+- The selected event ID matching the EID highlighted in RenderDoc, with a name like `ID3D12GraphicsCommandList::DrawIndexedInstanced()`
+
+## How to interpret the results
 
 This confirms the whole chain works: agent → MCP server → shared service → extension →
 your RenderDoc window. If the selected event is a marker or `Present`, later scenarios

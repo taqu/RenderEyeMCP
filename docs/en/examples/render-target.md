@@ -10,30 +10,34 @@ A render target looks black, saturated, or has unexpected colors.
 
 Select a draw call that writes to the target (or the last draw of the pass you suspect).
 
-## Example prompt
+## Example prompts
 
+**Quick investigation:**
 > Inspect the render target bound to the selected draw call. Show its contents, check the
 > format and dimensions, and inspect representative pixel values.
 
-## Investigation workflow
+**Detailed investigation:**
+> The render target for the selected draw call looks black. Check the bound render target:
+> confirm its format and dimensions, read its per-channel statistics (minimum and maximum
+> values across the whole texture), sample pixel values at the center and corners, and
+> get a preview image. Based on those values, explain whether the target contains no
+> data, HDR values outside the displayable range, NaN/Inf, or something else.
 
-1. `get_render_targets` — bound color targets and depth target: `resource_id`, size,
-   format, mip/slice.
-2. `get_texture_statistics` — per-channel min/max of the target (optionally a histogram
-   with `hist_min`/`hist_max` set to the expected range).
-3. `get_pixel_value` with a few `coords` (center, corners, a point where content is
-   expected; up to 16 per call).
-4. `get_texture_image` — a PNG preview. Set `max_dim` to at least the texture's largest
-   dimension (the error tells you `required_max_dim`).
+## What the agent should investigate
 
-## Expected observations
+- The bound color targets and depth target: resource IDs, formats, sizes, mip level and slice
+- Per-channel statistics (min/max) across the entire target, to distinguish true zero from HDR values outside display range
+- Pixel values at representative coordinates (center, corners, areas where content is expected)
+- A preview image if the target is a standard color format
 
-- Format and size, e.g. `R16G16B16A16_FLOAT`, 1920×1080.
+## Expected results
+
+- Format and size, e.g. `R16G16B16A16_FLOAT`, 1920×1080
 - Statistics such as `max.float = [0.0, 0.0, 0.0, 1.0]` (genuinely empty color) or
-  `max.float = [24.3, 18.1, 9.7, 1.0]` (HDR values far above 1.0).
-- Exact pixel values in `float`, `uint` and `sint` form.
+  `max.float = [24.3, 18.1, 9.7, 1.0]` (HDR values far above 1.0)
+- Exact pixel values in `float`, `uint` and `sint` form
 
-## Interpretation
+## How to interpret the results
 
 **A black image does not mean the values are zero.**
 

@@ -1,6 +1,6 @@
 [English](../../en/examples/gpu-bottleneck.md) | [日本語](gpu-bottleneck.md)
 
-# シナリオJ — このDrawCallがGPUで遅い原因を調査する
+# シナリオP4 — 特定のDrawCallのGPUボトルネックを診断する
 
 ## 問題
 
@@ -11,225 +11,75 @@ Render Target、リソースBindingを確認して、計測された根拠に基
 ## 準備
 
 1. RenderEyeMCP拡張機能を有効にしたRenderDocが起動している。
-2. 対象のCaptureがロード済みで、調査対象のDrawCallがRenderDocで選択済みである。
-3. `list_renderdoc_sessions`でセッションを確認し、`session_id`を控えておく。
+2. 対象のCaptureがロード済みで、調査対象のDrawCallがGPUタイミング分析などにより
+   特定済みである。そのevent_idがわかっていること。
 
 ## プロンプト例
 
-> このDrawCallがGPUで遅い原因を調査してください。パイプライン統計、Shader、
-> Render Target、リソースBindingを確認してください。計測で確認できた事実と
-> 仮説(推測)は必ず分けて報告してください。
+**クイック調査:**
+> イベント 1042 (`terrain_patch_00`) が 3.41 ms (GPU フレーム時間の23%) かかっています。
+> パイプライン統計を収集し、Shaderと Render Targetを調べて、ボトルネックがどこにあるか
+> 教えてください。
 
-## 調査の流れ
+**詳細な調査:**
+> イベント 1042 (`terrain_patch_00`) が 3.41 ms (GPU時間の23%) かかっています。
+> なぜコストが高いか調査してください。そのEventのパイプライン統計を収集してください。
+> Pixel Shaderを特定し、バインドされているTextureをフォーマットと次元とともに一覧し、
+> Render Targetを調べてください。その後、(1)確認できた計測値、(2)それに基づくボトルネック
+> の仮説、(3)さらなるプロファイリングが必要な問い、の3つに分けた構造化された分析を
+> 出力してください。
 
-### 1. 選択中のEventを確認する
+## 調査内容
 
-```json
-{
-  "tool": "get_selected_event",
-  "arguments": { "session_id": "..." }
-}
-```
+- この特定のDrawCallのGPU時間を確認してコストを確認する
+- パイプライン統計: 頂点呼び出し数、Pixel Shader呼び出し数、ラスタライズされたプリミティブ数
+- Pixel Shaderのエントリポイントと逆アセンブルから推定できる命令数
+- Pixel Stageの全Textureバインディング: フォーマット、次元、数
+- そのDrawでバインドされているRender Target: フォーマット、解像度、MSAAサンプル数
+- Vertex Stageのバインディング: 大きなStructured BufferをVertex Shaderが読んでいないか
 
-`event_id`、`num_indices`、`num_instances`を確認します。
+## 期待される結果
 
-### 2. 計測を実行する
+完全な調査では、計測された事実と推論を分けて報告します:
 
-```json
-{
-  "tool": "list_gpu_counters",
-  "arguments": { "session_id": "..." }
-}
-```
+**計測で確認できた事実:**
+- 3.41 ms GPU時間(Frameの23%)、3回リプレイの平均
+- 8,847,360 Pixel Shader呼び出し数
+- 1回の呼び出しあたり推定487命令
+- Pixel StageにバインドされたTexture SRVが6スロット
 
-タイミング系および統計系カウンターの`counter_id`を確認してから計測します。
+**仮説(ボトルネックの可能性):**
+- ALUヘビーなPixel Shader: 487命令 × 880万呼び出し = 非常に大きな計算バジェット
+- Textureキャッシュ圧力: Pixel Shaderに6枚の4096×4096 Textureがバインドされている
 
-```json
-{
-  "tool": "collect_gpu_counters",
-  "arguments": {
-    "session_id": "...",
-    "counter_ids": [1, 2, 3, 4, 5],
-    "repeats": 3
-  }
-}
-```
+**さらなるプロファイリングが必要:**
+- ALUバウンドかメモリレイテンシーバウンドかを判断するにはキャッシュミスまたは帯域幅カウンターが必要
 
-### 3. 対象DrawCallのパイプライン統計を確認する
+## 結果の解釈
 
-```json
-{
-  "tool": "get_pipeline_statistics",
-  "arguments": {
-    "measurement_id": "meas_...",
-    "event_id": 1234
-  }
-}
-```
+- テレインDrawCallはオープンワールドゲームで最も重い単一DrawCallになりがちです。大きなトライアングル数、
+  複数テクスチャレイヤーのPBRマテリアル、広い画面カバレッジが組み合わさるためです。
+- PS呼び出し数とラスタライズプリミティブ数の比率はオーバードロー/カバレッジの簡易シグナルです。
+- Pixel StageのTexture サイズが大きいことは、明示的なキャッシュミスカウンターが利用できない場合でも
+  キャッシュ圧力の一貫した指標です。
+- 逆アセンブルからの命令数推定値は近似値です。実際のGPUサイクルはdual-issue、述語実行、
+  メモリレイテンシー隠蔽に依存します。
+- カウンターが取得できない場合、その結果は欠損(ゼロではない)として扱ってください。
 
-`vertex_invocations`、`clipping_primitives`、`pixel_shader_invocations`など
-を確認します。
+## 制限事項
 
-### 4. パイプライン設定を確認する
+- 仮説レベルの結論は追加のカウンターデータがないと確認できません。レポートでは
+  仮説として明記してください。
+- 逆アセンブルからの推定命令数は近似値です。実際のGPUサイクルはdual-issue、述語実行、
+  メモリレイテンシー隠蔽に依存します。
+- カウンター値が取得できない場合、結果はゼロではなく欠損として返されます。パイプライン
+  統計がそのEventのデータを返さない場合、ドライバーがそのAPI/GPUでカウンターを
+  提供していません。
 
-```json
-{
-  "tool": "get_pipeline_state",
-  "arguments": {
-    "session_id": "...",
-    "section": "summary"
-  }
-}
-```
+## 関連ツール
 
-```json
-{
-  "tool": "get_pipeline_state",
-  "arguments": {
-    "session_id": "...",
-    "section": "rasterizer"
-  }
-}
-```
-
-Viewport、Scissor、ラスタライザの設定を確認します。
-
-### 5. ShaderとリソースBindingを確認する
-
-```json
-{
-  "tool": "list_shaders",
-  "arguments": { "session_id": "..." }
-}
-```
-
-```json
-{
-  "tool": "get_shader_reflection",
-  "arguments": {
-    "session_id": "...",
-    "stage": "Pixel",
-    "section": "all"
-  }
-}
-```
-
-```json
-{
-  "tool": "get_shader_bindings",
-  "arguments": {
-    "session_id": "...",
-    "stage": "Pixel"
-  }
-}
-```
-
-### 6. Render Targetを確認する
-
-```json
-{
-  "tool": "get_render_targets",
-  "arguments": { "session_id": "..." }
-}
-```
-
-BindされているColor TargetとDepth Targetのサイズ、フォーマット、MipLevel、
-配列スライスを確認します。
-
-### 7. テクスチャリソースを確認する
-
-重いShaderがテクスチャを多数サンプリングしている場合、Textureの情報を確認します。
-
-```json
-{
-  "tool": "get_texture_info",
-  "arguments": {
-    "session_id": "...",
-    "resource_id": 512
-  }
-}
-```
-
-解像度、MipLevel数、フォーマットを確認します。
-
-### 8. 逆アセンブルでShaderの複雑さを確認する
-
-```json
-{
-  "tool": "get_shader_disassembly",
-  "arguments": {
-    "session_id": "...",
-    "stage": "Pixel"
-  }
-}
-```
-
-命令数の多さ、テクスチャサンプル数、ループの有無などを確認します。
-
-## 確認できること
-
-- `pixel_shader_invocations` — ピクセルシェーダーが何回呼び出されたか。
-- `vertex_invocations` — 頂点シェーダーの呼び出し数。
-- `clipping_primitives` — クリッピング後のプリミティブ数。
-- Pixel ShaderにBindされているテクスチャの解像度とフォーマット。
-- Render Targetのサイズとフォーマット。
-- Shaderの命令数(逆アセンブルから)。
-
-## 解釈 — 事実と仮説を区別する
-
-GPUボトルネックの調査では、**計測で確認できた事実**と**推測による仮説**を必ず
-区別してください。
-
-### 確認できた事実の例
-
-- `pixel_shader_invocations`が4,096,000回である
-  (1920×2160 = 4,147,200ピクセルに対して約99%)
-- Pixel Shaderに6枚の2048×2048テクスチャがBind済み
-- Render TargetのフォーマットがR32G32B32A32_FLOATである(帯域幅コスト大)
-- Shaderの逆アセンブルに380命令含まれている
-
-### 仮説の例(測定だけでは確定できないもの)
-
-- テクスチャサンプル数が多く、テクスチャキャッシュミスが発生している可能性がある
-- 高精度フォーマット(R32G32B32A32_FLOAT)による帯域幅がボトルネックになっている
-  可能性がある
-- Shaderの命令数が多く、Arithmetic Limitedになっている可能性がある
-
-### 一般的なボトルネックパターンと根拠の例
-
-| ボトルネックの種類 | 計測根拠 | 仮説 |
-|---------------------|----------|------|
-| オーバードロー | PSInvocations >> 解像度 × ピクセル数 | 深度プリパスなし、アルファテストが多い |
-| テクスチャ帯域幅 | 大解像度テクスチャが多数Bind | キャッシュミスによる遅延 |
-| Render Target帯域幅 | 高精度フォーマット(R32F、RGBA32F) | 書き込みコスト過多 |
-| Shader複雑度 | 逆アセンブルの命令数が多い | Arithmetic Limitedの可能性 |
-| 頂点処理過多 | VertexInvocations >> プリミティブ数 × 3 | 高ポリゴンメッシュ、LODなし |
-
-### このツールで確認できないボトルネック
-
-以下は計測だけでは判断できません。RenderDocのUIやGPUプロファイラーと組み合わせて
-確認してください。
-
-- GPU内部のメモリ帯域幅の飽和状況
-- テクスチャキャッシュのヒット率
-- WavefrontのOccupancy
-- GPU温度によるサーマルスロットリング
-
-## 制限
-
-- カウンター可用性はGPU/ドライバー/APIによって異なります。カウンターが取得できない
-  場合、その結果は0ではなく省かれます。
-- 計測はリプレイベースです。ライブ実行時のフレームタイムとは一致しない場合があります。
-- CullモードやBlendステートはRenderEyeMCPでは取得できません。
-  RenderDocのPipeline Stateパネルで確認してください。
-- 個々のShaderスレッドのデバッグや波面解析はできません。
-
-## 関連Tool
-
-`get_selected_event`、`list_gpu_counters`、`collect_gpu_counters`、
-`get_gpu_timings`、`get_performance_summary`、`get_pipeline_statistics`、
-`get_pipeline_state`、`list_shaders`、`get_shader_reflection`、
-`get_shader_bindings`、`get_shader_disassembly`、`get_render_targets`、
-`get_texture_info` —
+`list_gpu_counters`、`collect_gpu_counters`、`get_gpu_measurement_status`、
+`get_gpu_timings`、`get_pipeline_statistics`、`get_current_shaders`、
+`get_shader_bindings`、`get_render_targets`、`get_pipeline_state` —
 [パフォーマンス分析ガイド](../performance.md)および
-[Toolリファレンス](../tools.md)を参照。
+[Toolリファレンス](../tools.md#gpuパフォーマンス分析)を参照。

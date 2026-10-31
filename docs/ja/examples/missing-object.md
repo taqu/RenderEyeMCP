@@ -15,25 +15,27 @@ Frameに表示されるはずのオブジェクトが見当たりません。
 
 ## プロンプト例
 
+**クイック調査:**
 > このオブジェクトがFrameに表示されません。選択中のDrawCallについて、頂点入力、Shader、
 > ラスタライザの状態、深度の状態、Render Targetを調べ、怪しい設定を挙げてください。
 > 確認できた事実と、考えられる原因は分けて書いてください。
 
-## 調査の流れ
+**詳細な調査:**
+> 選択中のDrawCallが表示されるはずのオブジェクトを描画していません。パイプラインの各ステージを
+> 系統的に調べてください: DrawがゼロでないVertex/Index数を送信しているか確認し、頂点バッファの
+> バインドとStrideを確認し、ViewportとScissorが期待する画面領域を覆っているか確認し、バインドされた
+> Render Targetをフォーマットとサイズとともに一覧し、Shader Reflectionの不一致を特定してください。
+> 各疑わしい発見について、確認済みか考えられる原因かを明記してください。
 
-1. `get_selected_event` — DrawCallであることを確認し、`num_indices`と`num_instances`を見る。
-2. `get_pipeline_state`の`input_assembly` — Topology、Index Buffer、Vertex Buffer
-   (Stride、オフセット)。
-3. `list_shaders`と`get_shader_reflection`(`stage: Vertex`、`section: input`) —
-   Shaderが期待する頂点属性。
-4. `get_pipeline_state`の`rasterizer` — ViewportとScissorの矩形。
-5. `get_pipeline_state`の`summary` / `get_render_targets` — BindされているColor/Depth
-   ターゲット、そのサイズとフォーマット。
-6. 必要なら、Strideに合わせた`decode_layout`でVertex Bufferを`read_buffer_data`し、
-   最初のいくつかの座標を見る。
-7. 必要なら、Colorターゲットを`get_texture_image`で表示し、何か描かれているか見る。
+## 調査内容
 
-## 確認できること
+- DrawCallがジオメトリを送信しているか(Index数、Vertex数、Instance数)
+- Vertex BufferとIndex Bufferのバインディング: バインドされているかとStrideの確認
+- Vertex Shaderが期待する入力属性とPipelineで宣言されているものの比較
+- ViewportとScissor: ゼロ以外でオブジェクトが表示されるはずの領域を覆っているか
+- Render Target: どのColorおよびDepth Targetがバインドされているか、サイズとフォーマット
+
+## 期待される結果
 
 | 確認項目 | 怪しい値 |
 |----------|----------|
@@ -44,7 +46,7 @@ Frameに表示されるはずのオブジェクトが見当たりません。
 | Render Target | 何もBindされていない、想定外のターゲット、Viewportとサイズが合わない |
 | デコードした座標 | すべて0、NaN、極端に大きい |
 
-## 解釈
+## 結果の解釈
 
 - Viewport/Scissorのサイズが0、インスタンス数が0、Render Targetが未Bind — これらは
   表示されない理由を直接説明する**確認済みの事実**です。
@@ -58,7 +60,7 @@ Frameに表示されるはずのオブジェクトが見当たりません。
 DrawCall 1つだけで、表示されない*理由*を証明できることはまれです。結果は診断ではなく、
 事実と手がかりの一覧として扱ってください。
 
-## 制限
+## 制限事項
 
 - Cullモード、Fillモード、Depth/Stencilステート、Blendステートは取得**できません**。
   RenderDocのPipeline Stateパネルで確認してください。
@@ -66,7 +68,7 @@ DrawCall 1つだけで、表示されない*理由*を証明できることは�
   期待しているかは、Vertex Shaderの入力シグネチャでわかります。
 - 頂点変換後のジオメトリ(Mesh Viewerの出力)は取得できません。
 
-## 関連Tool
+## 関連ツール
 
 `get_selected_event`、`get_pipeline_state`、`list_shaders`、`get_shader_reflection`、
 `get_render_targets`、`read_buffer_data`、`get_texture_image` —
