@@ -87,9 +87,6 @@ bugs on its own. It gives the agent accurate data; you and the agent interpret i
 
 ## Quick installation (Windows)
 
-> No public release has been published yet. Until it is, build from source as shown here;
-> once release artifacts exist you can install the `.whl` the same way.
-
 ```powershell
 # 1. Install uv (if you do not have it)
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
