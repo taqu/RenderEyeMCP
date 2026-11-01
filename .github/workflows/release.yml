@@ -143,29 +143,36 @@ jobs:
         shell: bash
         run: |
           NAME="${{ steps.ver.outputs.name }}"
-          cd "${NAME}" && zip -r "../${NAME}.zip" . && cd ..
-          echo "Created ${NAME}.zip"
+          mkdir -p dist
+          zip -r "dist/${NAME}.zip" "${NAME}/"
+          [[ -f "dist/${NAME}.zip" ]] || { echo "ERROR: archive not created: dist/${NAME}.zip"; exit 1; }
+          ls -lh "dist/${NAME}.zip"
 
       - name: Create archive (tar.gz)
         if: matrix.archive == 'tar.gz'
         shell: bash
         run: |
           NAME="${{ steps.ver.outputs.name }}"
-          tar -czf "${NAME}.tar.gz" "${NAME}/"
-          echo "Created ${NAME}.tar.gz"
+          mkdir -p dist
+          tar -czf "dist/${NAME}.tar.gz" "${NAME}/"
+          [[ -f "dist/${NAME}.tar.gz" ]] || { echo "ERROR: archive not created: dist/${NAME}.tar.gz"; exit 1; }
+          ls -lh "dist/${NAME}.tar.gz"
 
       - name: Checksum
         shell: bash
         run: |
           NAME="${{ steps.ver.outputs.name }}"
-          FILE="${NAME}.${{ matrix.archive }}"
-          sha256sum "${FILE}" > "${NAME}.sha256"
+          EXT="${{ matrix.archive }}"
+          [[ -f "dist/${NAME}.${EXT}" ]] || { echo "ERROR: archive missing: dist/${NAME}.${EXT}"; exit 1; }
+          cd dist
+          sha256sum "${NAME}.${EXT}" > "${NAME}.sha256"
           cat "${NAME}.sha256"
 
       - name: Verify checksum
         shell: bash
         run: |
           NAME="${{ steps.ver.outputs.name }}"
+          cd dist
           sha256sum --check "${NAME}.sha256"
           echo "Checksum verified"
 
@@ -174,8 +181,8 @@ jobs:
         with:
           name: release-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
-            RenderEyeMCP-*.${{ matrix.archive }}
-            RenderEyeMCP-*.sha256
+            dist/RenderEyeMCP-*.${{ matrix.archive }}
+            dist/RenderEyeMCP-*.sha256
           if-no-files-found: error
           retention-days: 14
 
