@@ -1,274 +1,315 @@
-# Phase 22 — Migrate GitHub Actions Release Workflow to Go
+# Phase 22.1 — Rebuild GitHub Actions Release Workflow from Scratch
 
 ## Objective
 
-Update `.github/workflows/release.yml` to build and publish the Go-based RenderEyeMCP distribution.
+Completely replace `.github/workflows/release.yml` with a clean, reliable GitHub Actions release workflow designed specifically for the Go implementation of RenderEyeMCP.
 
-RenderEyeMCP has completed its migration from the legacy Python MCP server and Shared IPC Service to Go.
+The existing release workflow is failing and may contain unnecessary complexity or assumptions inherited from the previous Python implementation.
 
-The release workflow must now produce self-contained native distributions containing:
+Do not attempt to preserve the existing workflow structure merely for compatibility.
 
-- The compiled Go executable.
-- Installation and setup scripts.
-- The RenderDoc Python Extension.
-- Essential project documentation and license files.
+**Rewrite the release workflow from scratch using a minimal, conventional Go build-and-release pipeline.**
 
-Remove all legacy Python MCP server packaging and publishing logic.
+The final workflow must build native Go binaries, package the necessary distribution files, and publish them through GitHub Releases.
 
-Keep the release process simple, reproducible, and maintainable.
+## 1. Inspect the Repository
 
-## 1. Review the Existing Repository
+Before implementing the workflow, inspect:
 
-Before modifying the workflow, inspect:
+- Current `.github/workflows/release.yml`.
+- `go.mod` and `go.sum`.
+- The actual Go executable entry point.
+- Existing Makefile or Go build scripts, if any.
+- Executable version handling.
+- `scripts/` directory.
+- `extension/` or `extensions/` directory.
+- Existing installation scripts.
+- Current release archive structure.
+- Existing workflow failures, if logs are available.
 
-- `.github/workflows/release.yml`
-- `go.mod`
-- Go executable entry points
-- Existing Go build scripts
-- `scripts/` or equivalent installer directories
-- `extension/` or `extensions/`
-- Existing release archive conventions
-- Other GitHub Actions workflows
+Identify the correct Go build command and required distribution files.
 
-Determine the actual project structure.
+Do not assume the Go entry point is located at the repository root.
 
-Do not assume that the directory names, executable entry points, or build commands match the examples in this instruction.
+Use the repository's actual implementation as the source of truth.
 
-Reuse existing working Go build commands where appropriate.
+## 2. Replace release.yml Completely
 
-## 2. Native Go Builds
+Delete the existing workflow implementation and create a new one.
 
-Build the RenderEyeMCP executable for the supported platforms.
+Do not retain:
 
-At minimum, consider:
+- Python packaging steps.
+- Python MCP server dependencies.
+- uv or pip installation steps.
+- PyPI or TestPyPI integration.
+- Legacy Python executable packaging.
+- Obsolete artifact handling.
+- Unnecessary compatibility logic.
 
-| GOOS | GOARCH | Executable |
-|---|---|---|
-| windows | amd64 | rendereye-mcp.exe |
-| linux | amd64 | rendereye-mcp |
-| linux | arm64 | rendereye-mcp |
+Keep the YAML simple and understandable.
 
-Preserve any other platforms already supported and validated by the project.
+Prefer standard GitHub Actions features over custom workflow frameworks.
 
-Do not advertise a platform as fully supported merely because Go cross-compilation succeeds.
+## 3. Workflow Triggers
 
-For macOS, distinguish between successfully compiling the Go executable and actual RenderDoc availability and integration support.
+The workflow should support:
 
-Use the appropriate Go build configuration for the project.
+### Tagged Releases
 
-Prefer reproducible builds with release version information embedded when the existing executable supports it.
+Automatically build and publish when a release tag is pushed.
 
-Use `CGO_ENABLED=0` only if the implementation and all dependencies support building without CGO.
+Use the existing version tag convention, such as:
 
-Do not introduce unnecessary platform-specific build machinery.
+```text
+v1.0.0
+v1.0.1
+v1.1.0
+```
 
-## 3. Release Package Layout
+Ensure that release builds use the tagged commit.
 
-Each release archive must contain the executable and all required installation resources.
+### Manual Validation
+
+Provide `workflow_dispatch` support for manually validating the release pipeline.
+
+Manual validation must not accidentally publish a production release.
+
+Prefer a clearly separated validation mode that builds, packages, and uploads workflow artifacts without creating a GitHub Release.
+
+Do not introduce automatic production publishing from ordinary branch pushes.
+
+## 4. Go Build
+
+Use a supported stable Go toolchain.
+
+Prefer `actions/setup-go` with the Go version obtained from `go.mod`, where practical.
+
+Run:
+
+```bash
+go test ./...
+```
+
+Use the correct module working directory if `go.mod` is not in the repository root.
+
+Build native executables for the currently supported platforms.
+
+Initial targets:
+
+| Platform | GOOS | GOARCH | Output |
+|---|---|---|---|
+| Windows x64 | windows | amd64 | rendereye-mcp.exe |
+| Linux x64 | linux | amd64 | rendereye-mcp |
+
+Additional architectures may be included if they are already supported and validated.
+
+Use `CGO_ENABLED=0` only if the project builds and runs correctly without CGO.
+
+Do not require Python, uv, or pip to build the Go executable.
+
+### Version Information
+
+Preserve the application's existing version information mechanism.
+
+If the application supports Go linker version injection, use the existing linker variables.
+
+Do not invent package paths or linker symbols.
+
+Validate that the compiled executable reports the expected version using its actual supported CLI command.
+
+## 5. Package Release Files
+
+Each distribution archive must include:
+
+- Compiled platform-specific Go executable.
+- Required installation scripts.
+- RenderDoc Python Extension.
+- README.md.
+- LICENSE, if present.
+
+The expected layout should be compatible with the portable installation design.
 
 For example:
 
 ```text
 RenderEyeMCP/
 ├── rendereye-mcp.exe
+├── install.ps1
 ├── scripts/
-│   └── install.ps1
 ├── extension/
-│   └── ...
 ├── README.md
 └── LICENSE
 ```
 
-Use the actual repository structure.
+The actual archive structure must be derived from the repository.
 
-If the existing portable installer expects `install.ps1` and the executable to be in the same directory, preserve that relationship in the packaged archive.
+### Important
 
-Do not move files into a different archive layout without updating and validating the installer.
+The current Windows installer expects the Go executable to be located relative to `install.ps1`.
 
-The release package must work when extracted into an arbitrary permanent directory.
+Ensure the packaged directory layout satisfies that expectation.
 
-Do not require a separate executable installation step.
+If `install.ps1` is located under `scripts/` in the repository, either arrange the archive appropriately or make a minimal, justified installer path adjustment.
 
-## 4. Include Scripts and RenderDoc Extension
+Do not create an archive that builds successfully but cannot be installed.
 
-Package the required installation scripts and RenderDoc Extension files with every relevant platform distribution.
+Preserve all files required by the RenderDoc Extension.
 
-Requirements:
+Do not include obsolete Python MCP or IPC server code.
 
-- Preserve directory structure.
-- Preserve all runtime files required by the Extension.
-- Preserve shell-script executable permissions where applicable.
-- Exclude caches, temporary files, generated test output, and unnecessary development files.
-- Do not package legacy Python MCP or Shared IPC implementations.
-- Do not package Python virtual environments.
-- Do not package Go source code unless explicitly required for distribution.
+## 6. Archive Formats
 
-The RenderDoc Extension is intentionally written in Python and must remain included.
+Use:
 
-Its presence does not imply that end users need to install a separate Python environment.
+- `.zip` for Windows.
+- `.tar.gz` for Linux.
 
-## 5. Archive Naming
-
-Use consistent, versioned release artifact names.
-
-For example:
+Use consistent artifact names:
 
 ```text
-RenderEyeMCP-v1.0.0-windows-amd64.zip
-RenderEyeMCP-v1.0.0-linux-amd64.tar.gz
-RenderEyeMCP-v1.0.0-linux-arm64.tar.gz
+RenderEyeMCP-vX.Y.Z-windows-amd64.zip
+RenderEyeMCP-vX.Y.Z-linux-amd64.tar.gz
+```
+
+Create SHA-256 checksums:
+
+```text
 checksums.txt
 ```
 
-Keep naming consistent with the existing release conventions unless there is a clear reason to change them.
+Ensure checksums refer to the final archives rather than intermediate files.
 
-Avoid introducing multiple aliases for the same artifact.
+## 7. GitHub Releases Publishing
 
-Generate SHA-256 checksums for all release archives.
+Publish release assets to the GitHub Release corresponding to the pushed tag.
 
-## 6. GitHub Actions Workflow
+Use maintained GitHub Actions with appropriate permissions.
 
-Update `.github/workflows/release.yml` to perform the following operations:
+Requirements:
 
-1. Trigger on the project's existing release-tag convention.
-2. Check out the repository.
-3. Set up the required Go toolchain.
-4. Run Go tests.
-5. Build the supported native binaries.
-6. Assemble platform-specific distribution directories.
-7. Package the release archives.
-8. Generate SHA-256 checksums.
-9. Upload the archives and checksums to the corresponding GitHub Release.
+- Use `contents: write` only for the publishing job.
+- Ensure all build and packaging steps succeed before publishing.
+- Fail on missing required artifacts.
+- Preserve exact release version identifiers.
+- Prevent simultaneous jobs from corrupting the same release.
+- Avoid partially successful releases being reported as successful.
+- Do not silently overwrite release assets from unrelated commits.
 
-Prefer official or widely maintained GitHub Actions.
+Use the official GitHub release API or a maintained release action.
 
-Pin actions to appropriate stable versions or immutable commits according to the repository's existing security policy.
+Do not introduce external release-management services.
 
-Use minimal GitHub token permissions.
+### Failure Handling
 
-For release publishing, grant `contents: write` only where required.
+A failed Go build, test, or packaging operation must stop the workflow.
 
-Do not introduce Python setup, pip, uv, or PyPI publishing steps.
+Do not use `continue-on-error` to hide required failures.
 
-## 7. Tag and Release Behavior
+Do not ignore missing extension or installer files.
 
-Preserve the project's existing version-tag conventions where possible.
+Make failed steps easy to identify in the GitHub Actions logs.
 
-For example:
+## 8. Keep the Workflow Simple
 
-```text
-v1.0.0
-v1.1.0
-v1.1.1
-```
+Avoid unnecessary complexity.
 
-Ensure that a release artifact is built from the corresponding tagged commit.
+Do not introduce:
 
-Avoid silently building from the latest default branch when processing a tag.
+- Docker-based release builds.
+- A new package manager.
+- Python-based packaging scripts.
+- Custom CI frameworks.
+- Unnecessary third-party actions.
+- Multiple independent release publishers.
+- Complicated cross-workflow dependencies.
 
-If prerelease tags are supported, ensure they are correctly marked as prereleases.
+A single workflow containing clearly separated build, package, and publish stages is sufficient.
 
-Prevent duplicate artifact publication or conflicting concurrent release jobs.
+A matrix build is appropriate if it reduces duplication without complicating artifact collection.
 
-Do not automatically publish a production release from ordinary branch pushes.
+If matrix jobs are used, ensure each produces uniquely named artifacts and that the publishing job collects exactly the expected outputs.
 
-## 8. Validation
+## 9. Validation Before Publishing
 
-Add appropriate checks to verify the generated distributions.
+Add validation steps that verify:
 
-At minimum:
+1. Go tests pass.
+2. All expected native binaries exist.
+3. Required scripts are packaged.
+4. The RenderDoc Extension is packaged.
+5. Archive directory structure is correct.
+6. Windows installer path assumptions are satisfied.
+7. Linux executable permissions are preserved.
+8. Archive files are readable and not empty.
+9. SHA-256 checksums match the generated archives.
+10. No legacy Python MCP server is included.
 
-- Go tests pass.
-- All required binaries are produced.
-- The required installer scripts exist.
-- The RenderDoc Extension is included.
-- The release archives have the expected layout.
-- No legacy Python MCP server files are packaged.
-- Archive checksums are valid.
-- Version metadata matches the release tag.
+Where supported, execute a basic binary smoke test on the corresponding runner.
 
-For Windows distributions, verify that the packaged `install.ps1` can locate the executable and Extension in their actual packaged locations.
+Do not claim that a successful cross-compilation proves RenderDoc integration works.
 
-For Linux distributions, verify executable permissions and the documented installation layout.
+### Dry-Run Requirement
 
-Where runners permit, execute a basic executable smoke test, such as the existing version command.
+The manually dispatched validation workflow must exercise the same build and packaging logic used by tagged releases.
 
-Do not claim successful RenderDoc integration testing based solely on cross-compilation or executable startup.
+It must upload the generated archives as GitHub Actions artifacts for inspection.
 
-## 9. Remove Legacy Release Logic
-
-Remove obsolete workflow steps related to:
-
-- Python MCP package builds.
-- Python wheels and source distributions.
-- pip and uv dependency installation for the legacy server.
-- Python Shared IPC Service packaging.
-- PyPI and TestPyPI publishing.
-- Legacy Python executable generation.
-- Unnecessary Python runtime bundling.
-
-Remove obsolete release-specific configuration files if they are no longer used elsewhere.
-
-Do not delete files required by the RenderDoc Python Extension.
+It must not create or modify a public GitHub Release.
 
 ## 10. Documentation
 
-Update relevant release documentation to describe the new native distribution.
+Update the release-related documentation as necessary.
 
-Explain that users should:
+Document:
 
-1. Download the appropriate GitHub Release archive.
-2. Extract it to a permanent directory.
-3. Run the relevant setup script.
-4. Enable the RenderDoc Extension if required.
-5. Configure their coding agent to execute the binary from the extracted directory.
+- Supported release platforms.
+- Archive naming conventions.
+- Portable installation.
+- Required extension setup.
+- Version tag behavior.
+- How maintainers can run the release workflow in validation mode.
 
-Do not reintroduce the old `%LOCALAPPDATA%\RenderEyeMCP` executable-copy installation model.
+Do not reintroduce the old Python installation model.
 
-Keep English and Japanese instructions consistent.
+Do not create Python-to-Go migration instructions.
 
 ## 11. Acceptance Criteria
 
-Phase 22 is complete when:
+This phase is complete when:
 
-1. `release.yml` builds RenderEyeMCP using Go.
-2. Supported native binaries are produced successfully.
-3. Every release archive contains the required executable, scripts, and RenderDoc Extension.
-4. The archive layout is compatible with the portable installer.
-5. Release artifacts have consistent versioned filenames.
-6. SHA-256 checksums are generated.
-7. No legacy Python MCP or Shared IPC distribution is produced.
-8. No Python development environment is required by end users.
-9. The workflow can publish artifacts to GitHub Releases using the existing release-tag policy.
-10. README and installation documentation match the new distribution layout.
+1. The existing `release.yml` has been fully replaced.
+2. The new workflow builds the actual Go application.
+3. Go tests run successfully.
+4. Windows and Linux release binaries are generated.
+5. Archives include the required scripts and RenderDoc Extension.
+6. Portable installation layout is correct.
+7. SHA-256 checksums are generated and verified.
+8. Manual validation builds release artifacts without publishing.
+9. Tag-triggered execution publishes the corresponding GitHub Release.
+10. No Python MCP server packaging remains.
+11. The workflow is understandable without knowledge of the old Python implementation.
 
 ## Deliverables
 
-- Updated `.github/workflows/release.yml`.
-- Updated release packaging steps or scripts.
-- Updated documentation where necessary.
-- Removal of obsolete release-related configuration.
-- A concise summary of the generated artifacts and validation results.
+- Completely rewritten `.github/workflows/release.yml`.
+- Any minimal packaging adjustments required by the actual repository.
+- Updated release documentation, where necessary.
+- Validation results.
+- A concise explanation of the new workflow.
 
-## Constraints
+## Execution Instructions
 
-- Do not modify MCP Tool contracts.
-- Do not modify the IPC protocol.
-- Do not change Go runtime behavior.
-- Do not rewrite the RenderDoc Python Extension.
-- Do not add a new package manager.
-- Do not create Python-to-Go migration documentation.
-- Do not create or push release tags.
-- Do not publish an actual GitHub Release during implementation unless explicitly requested.
+Inspect the repository and any available failure logs first.
 
-## Execution Policy
+Replace the workflow rather than incrementally patching its legacy structure.
 
-Inspect the existing workflow and repository structure first.
+Implement the complete Go release pipeline.
 
-Implement the workflow changes directly.
+Validate the YAML, build commands, archive contents, and dry-run behavior as far as the available environment permits.
 
-Validate the build and archive generation locally or through available non-publishing CI checks where practical.
+If GitHub-hosted execution cannot be performed, report that limitation rather than claiming the workflow has passed.
 
-Report any platform builds or integration checks that could not be verified.
+Do not push tags or publish an actual release.
 
-**The final release workflow should be a straightforward Go build-and-package pipeline, not a legacy Python packaging workflow with Go binaries added to it.**
+**Prioritize a small, reliable, Go-native release workflow over preserving historical CI complexity.**

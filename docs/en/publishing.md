@@ -1,390 +1,167 @@
 [English](publishing.md) | [日本語](../ja/publishing.md)
 
-# PyPI Publishing Guide
+# Release Guide
 
-This document describes how to publish RenderEyeMCP to PyPI and TestPyPI using
-GitHub Actions and PyPI Trusted Publishing (OIDC).
+This page describes how to build, validate, and publish a RenderEyeMCP release.
 
-## Overview
+- [Supported platforms](#supported-platforms)
+- [Archive naming](#archive-naming)
+- [How the release workflow works](#how-the-release-workflow-works)
+- [Validate before publishing (dry run)](#validate-before-publishing-dry-run)
+- [Publish a release](#publish-a-release)
+- [Portable installation](#portable-installation)
+- [Required extension setup](#required-extension-setup)
+- [Troubleshooting](#troubleshooting)
 
-RenderEyeMCP uses **PyPI Trusted Publishing** (OpenID Connect) instead of long-lived
-API tokens. No `PYPI_API_TOKEN` or `TEST_PYPI_API_TOKEN` secrets are stored in the
-repository. Authentication happens automatically through GitHub Actions OIDC when the
-workflow runs inside the configured GitHub Environment.
+## Supported platforms
 
-Two separate workflows handle publishing to two separate destinations:
+| Platform | Archive | Go binary | Installer |
+|----------|---------|-----------|-----------|
+| Windows x64 | `.zip` | `rendereye-mcp.exe` | `install.ps1` |
+| Linux x64 | `.tar.gz` | `rendereye-mcp` | `install.sh` |
 
-| Workflow file | Destination | Tag format | Version | Use |
-|---|---|---|---|---|
-| `publish-pypi.yml` | PyPI | `v1.0.0` | `1.0.0` | Official releases |
-| `publish-testpypi.yml` | TestPyPI | `v1.0.0-test.1` | `1.0.0.dev1` | Pre-release validation |
+RenderDoc runs on Windows and Linux. macOS is not a supported target because
+RenderDoc does not have a macOS release.
 
-Each workflow file has its publishing destination fixed at the file level. There is no
-shared workflow that selects between PyPI and TestPyPI at runtime.
+## Archive naming
 
----
-
-## Tag Naming Convention
-
-### Production tags
-
-```
-vMAJOR.MINOR.PATCH
-```
-
-Examples: `v0.1.0`, `v1.0.0`, `v1.2.3`
-
-These tags trigger `publish-pypi.yml`. The package version is the tag with the
-leading `v` removed. The version in source files (`pyproject.toml`, `__init__.py`,
-`extension.json`) must already match the tag before it is pushed.
-
-### Test tags
-
-```
-vMAJOR.MINOR.PATCH-test.N
+```text
+RenderEyeMCP-v1.0.0-windows-amd64.zip
+RenderEyeMCP-v1.0.0-linux-amd64.tar.gz
+checksums.txt
 ```
 
-Examples: `v0.1.0-test.1`, `v0.1.0-test.2`, `v1.0.0-test.1`
+The version comes from the git tag (e.g. `v1.0.0` → `1.0.0`).
+Pre-release tags such as `v1.1.0-beta.1` are marked as prereleases on GitHub.
 
-`N` must be a positive integer (`>= 1`). These tags trigger `publish-testpypi.yml`.
-The package version is normalized to a PEP 440 development version:
+## How the release workflow works
 
-| Git tag | Package version |
-|---|---|
-| `v0.1.0-test.1` | `0.1.0.dev1` |
-| `v0.1.0-test.2` | `0.1.0.dev2` |
-| `v1.0.0-test.3` | `1.0.0.dev3` |
+The workflow in `.github/workflows/release.yml` has four sequential jobs:
 
-Each test iteration requires a unique `N` — TestPyPI does not allow re-uploading the
-same version.
+| Job | What it does |
+|-----|-------------|
+| `test` | Runs `go test ./...` and `go vet ./...` |
+| `build` | Builds the binary, assembles the archive, verifies contents, creates checksum |
+| `checksums` | Combines per-platform `.sha256` files into a single `checksums.txt` |
+| `publish` | Creates the GitHub Release and uploads all archives — **tag pushes only** |
 
-### Invalid tags
+The `publish` job is skipped on manual `workflow_dispatch` runs.
+Archives are still uploaded as workflow artifacts, which you can download and inspect.
 
-The following tag formats are **rejected** — no publishing occurs:
+## Validate before publishing (dry run)
 
-| Tag | Reason |
-|---|---|
-| `v0.1` | Missing patch segment |
-| `v0.1.0-test` | Unnumbered test suffix |
-| `v0.1.0-test.0` | Test iteration must be ≥ 1 |
-| `v0.1.0-test.foo` | Non-numeric iteration |
-| `v0.1.0-debug` | Unknown suffix |
-| `release-0.1.0` | Wrong prefix |
+To test the full build and packaging pipeline without creating a GitHub Release:
 
----
+1. Go to **Actions → Release** on GitHub.
+2. Click **Run workflow**.
+3. Choose the branch to test from.
+4. Click **Run workflow**.
 
-## Workflow: `publish-testpypi.yml`
-
-The workflow file is `.github/workflows/publish-testpypi.yml`.
-
-### Trigger
-
-Pushes to tags matching `v*-test.*`.
-
-### Job structure
-
-```
-Tag Push (v*-test.*)
-    |
-    classify ── validates tag is a test release, rejects all others
-    |              outputs: version=x.y.z.devN
-    |
-    build ── checkout, inject version x.y.z.devN, uv build, twine check, smoke test
-    |
-    publish-testpypi → environment: testpypi → https://test.pypi.org/legacy/
-```
-
-### Key properties
-
-- `id-token: write` is granted **only** to `publish-testpypi`, not to `classify` or `build`.
-- The `classify` job rejects any tag that is not a test tag (`vMAJOR.MINOR.PATCH-test.N`).
-  Production tags pushed accidentally cannot trigger a TestPyPI upload.
-- The `publish-testpypi` job has an explicit guard step that confirms the version
-  contains `.dev` before requesting OIDC credentials.
-- The workflow uses `concurrency` to prevent duplicate uploads for the same tag.
-
----
-
-## Workflow: `publish-pypi.yml`
-
-The workflow file is `.github/workflows/publish-pypi.yml`.
-
-### Trigger
-
-Pushes to tags matching `v*`.
-
-### Job structure
-
-```
-Tag Push (v*)
-    |
-    classify ── validates tag is a production release, rejects all others
-    |              outputs: version=x.y.z
-    |
-    build ── checkout, validate source version matches tag, uv build, twine check, smoke test
-    |
-    publish-pypi → environment: pypi → https://pypi.org/
-```
-
-### Key properties
-
-- `id-token: write` is granted **only** to `publish-pypi`, not to `classify` or `build`.
-- The `classify` job rejects any tag that is not a production tag (`vMAJOR.MINOR.PATCH`).
-  Test tags (`v*-test.*`) and any other suffixed tags cannot proceed to build or publish.
-- The `publish-pypi` job has an explicit guard step that confirms the version does not
-  contain a pre-release segment before requesting OIDC credentials.
-- The workflow uses `concurrency` to prevent duplicate uploads for the same tag.
-
----
-
-## Setting Up Trusted Publishing
-
-Before publishing can succeed you must register a Trusted Publisher on each index.
-The two workflows use **separate** Trusted Publisher registrations.
-
-### Required accounts
-
-- A PyPI account at https://pypi.org/ with owner or maintainer access to the
-  `rendereye-mcp` project.
-- A TestPyPI account at https://test.pypi.org/ (separate from PyPI).
-
-### GitHub Environment setup
-
-Create two GitHub Environments in the repository settings
-(**Settings → Environments**):
-
-| Environment | Recommended protection rules |
-|---|---|
-| `pypi` | Require manual approval; restrict to production-tag branches/refs |
-| `testpypi` | No required approval (or auto-approve for maintainers) |
-
-### Trusted Publisher registration
-
-Register a Trusted Publisher on **each** index. Use these exact values:
-
-**TestPyPI** — https://test.pypi.org/manage/account/publishing/
-
-| Field | Value |
-|---|---|
-| Repository owner | `taqu` |
-| Repository name | `RenderEyeMCP` |
-| Workflow filename | `publish-testpypi.yml` |
-| Environment name | `testpypi` |
-
-**PyPI** — https://pypi.org/manage/account/publishing/
-
-| Field | Value |
-|---|---|
-| Repository owner | `taqu` |
-| Repository name | `RenderEyeMCP` |
-| Workflow filename | `publish-pypi.yml` |
-| Environment name | `pypi` |
-
-⚠️ The workflow filename must match the corresponding Trusted Publisher registration
-exactly. Do not use a single registration for both workflow files.
-
-If the `rendereye-mcp` project does not yet exist on an index, register a
-**Pending Publisher** using the same fields above. The project is created
-automatically on first upload.
-
----
-
-## Publishing a Test Release
-
-Use test releases to validate the packaging pipeline before the first official release.
-
-### Step 1 — Create and push a test tag
+The workflow runs all jobs except `publish`. Download the generated archives from the
+**Artifacts** section of the completed run and verify them locally:
 
 ```bash
-# First time
-git tag v1.0.0-test.1
-git push origin v1.0.0-test.1
-
-# If you need to republish after a fix (use a higher N)
-git tag v1.0.0-test.2
-git push origin v1.0.0-test.2
+# Extract and inspect Linux archive
+tar -tzf RenderEyeMCP-dev-*-linux-amd64.tar.gz
 ```
 
-### Step 2 — Monitor the workflow
-
-Open the **Actions** tab in the repository. The `Publish to TestPyPI` workflow runs:
-
-1. `Validate Test Tag` — verifies the tag format, outputs `version=1.0.0.dev1`
-2. `Build Distributions` — injects version `1.0.0.dev1`, builds wheel and sdist, runs smoke test
-3. `Publish to TestPyPI` — authenticates via OIDC, uploads to TestPyPI
-
-### Step 3 — Verify on TestPyPI
-
-The published package appears at:
-
-```
-https://test.pypi.org/project/rendereye-mcp/1.0.0.dev1/
+```powershell
+# Extract and inspect Windows archive
+Expand-Archive RenderEyeMCP-dev-*-windows-amd64.zip -DestinationPath test-extract\
+Get-ChildItem test-extract\ -Recurse
 ```
 
-### Step 4 — Install from TestPyPI
+## Publish a release
 
-```bash
-python -m pip install \
-  --index-url https://test.pypi.org/simple/ \
-  --extra-index-url https://pypi.org/simple/ \
-  "rendereye-mcp==1.0.0.dev1"
+1. Ensure `extensions/rendereye/extension.json` contains the correct version.
+
+2. Create and push a tag:
+
+   ```bash
+   git tag v1.0.0
+   git push origin v1.0.0
+   ```
+
+3. The `Release` workflow triggers automatically. Monitor it on the **Actions** tab.
+
+4. When the workflow completes, the GitHub Release is published with:
+   - `RenderEyeMCP-v1.0.0-windows-amd64.zip`
+   - `RenderEyeMCP-v1.0.0-linux-amd64.tar.gz`
+   - `checksums.txt`
+
+To publish a pre-release, use a tag with a hyphen-separated identifier,
+for example `v1.1.0-rc.1`. The release is automatically flagged as a pre-release.
+
+## Portable installation
+
+Each archive is self-contained and installs from the extracted directory.
+The binary is never copied to a system path — users configure their coding agent to
+point directly to the extracted `rendereye-mcp.exe` (or `rendereye-mcp`).
+
+**Windows archive layout:**
+
+```text
+RenderEyeMCP-v1.0.0-windows-amd64/
+├── rendereye-mcp.exe
+├── install.ps1          ← run this from the extracted directory
+├── extensions/          ← installed to %APPDATA%\qrenderdoc\extensions\rendereye\
+│   ├── __init__.py
+│   ├── extension.json
+│   └── ...
+├── README.md
+└── LICENSE
 ```
 
-**Note**: Using `--extra-index-url` with PyPI allows pip to resolve dependencies that
-are not mirrored on TestPyPI. Verify that all expected dependencies install correctly.
+**Linux archive layout:**
 
-### Step 5 — Smoke test the installed package
-
-```bash
-python -c "import rendereye_mcp; print(rendereye_mcp.__version__)"
-rendereye-mcp --help
+```text
+RenderEyeMCP-v1.0.0-linux-amd64/
+├── rendereye-mcp
+├── install.sh           ← run this from the extracted directory
+├── extension/           ← installed to ~/.local/share/qrenderdoc/extensions/rendereye/
+│   ├── __init__.py
+│   ├── extension.json
+│   └── ...
+├── README.md
+└── LICENSE
 ```
 
-Expected output: version `1.0.0.dev1` and the help text for the MCP server.
+Both installers require the archive to be fully extracted before running.
+Do not run `install.ps1` or `install.sh` from a different directory.
 
----
+See [Installation](installation.md) for end-user instructions.
 
-## Publishing an Official Release
+## Required extension setup
 
-### Prerequisites
+The RenderDoc Python Extension (`extensions/rendereye/`) is included in every archive.
+It must be installed into RenderDoc's per-user extension directory by running the
+installer script.
 
-1. The `rendereye-mcp` project exists on PyPI (or a Pending Publisher is registered).
-2. The `pypi` GitHub Environment exists with appropriate protection rules.
-3. Version in `pyproject.toml`, `src/rendereye_mcp/__init__.py`, and
-   `extensions/rendereye/extension.json` all match the intended release version.
-4. All tests pass on `main`.
+The extension is written in Python and uses RenderDoc's embedded Python interpreter.
+End users do not need to install Python separately.
 
-### Step 1 — Update the version in source
-
-Edit these three files and set the same version string:
-
-- `pyproject.toml` → `version = "1.0.0"`
-- `src/rendereye_mcp/__init__.py` → `__version__ = "1.0.0"`
-- `extensions/rendereye/extension.json` → `"version": "1.0.0"`
-
-Commit and push to `main`. CI validates consistency via `validate_release.py --check-versions`.
-
-### Step 2 — Create and push the production tag
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-⚠️ **PyPI does not allow replacing a distribution once published.** Double-check the
-version before pushing the tag. You cannot re-upload `rendereye_mcp-1.0.0-py3-none-any.whl`
-if it already exists on PyPI.
-
-### Step 3 — Approve the release (if required)
-
-If the `pypi` GitHub Environment requires manual approval, a maintainer must approve
-the `Publish to PyPI` job in the Actions UI before the upload proceeds.
-
-### Step 4 — Verify on PyPI
-
-```
-https://pypi.org/project/rendereye-mcp/1.0.0/
-```
-
-```bash
-python -m pip install "rendereye-mcp==1.0.0"
-python -c "import rendereye_mcp; print(rendereye_mcp.__version__)"
-```
-
----
-
-## Security Notes
-
-- `id-token: write` is granted only to the publishing job in each workflow.
-  The `classify` and `build` jobs do not receive OIDC permissions.
-- Each publishing job has an explicit guard step that re-checks the version format
-  before publishing, providing defense in depth.
-- No long-lived PyPI tokens are stored as GitHub Secrets.
-- Each workflow has its publishing destination fixed at the file level — there is no
-  runtime conditional that selects between PyPI and TestPyPI.
-- A mismatch between the GitHub Environment name and the registered Trusted Publisher
-  causes OIDC authentication to fail — misconfiguration cannot silently publish to the
-  wrong index.
-- Concurrency is set to `cancel-in-progress: false` to avoid partial uploads.
-
----
+After installing the extension, users must enable it once in RenderDoc:
+**Tools → Manage Extensions → RenderEyeMCP → Always Load**.
 
 ## Troubleshooting
 
-### Trusted Publisher not configured
+**Build fails with `go: toolchain constraint`**
 
-**Symptom**: `403 Forbidden` during upload or OIDC token exchange failure.
+The `go.mod` file specifies a minimum Go version. Ensure the runner's Go version
+satisfies that constraint. The workflow uses `go-version-file: go.mod` to pick
+the correct version automatically.
 
-**Fix**: Ensure the Trusted Publisher is registered on the correct index with the
-exact repository owner (`taqu`), repository name (`RenderEyeMCP`), workflow filename
-(`publish-testpypi.yml` for TestPyPI, `publish-pypi.yml` for PyPI), and environment
-name (`testpypi` or `pypi`).
+**`extensions/__init__.py` or `extension/extension.json` missing from archive**
 
-### Wrong workflow filename in Trusted Publisher registration
+Verify that `extensions/rendereye/` exists in the repository root and contains the
+expected files. The workflow copies this directory into the archive during assembly.
 
-**Symptom**: OIDC authentication fails even though the environment name is correct.
+**Checksum verification fails**
 
-**Fix**: TestPyPI registration must use `publish-testpypi.yml`. PyPI registration must
-use `publish-pypi.yml`. Do not use the same filename for both registrations.
+The checksum file uses the archive filename as produced on the build runner.
+Verify using the original, unmodified filename.
 
-### Wrong environment name
+**Release already exists**
 
-**Symptom**: OIDC authentication fails even though the publisher is registered.
-
-**Fix**: Verify the GitHub Environment name in the workflow (`environment: pypi` or
-`environment: testpypi`) matches exactly what is registered on the index.
-
-### Duplicate distribution version
-
-**Symptom**: `400 File already exists` during upload.
-
-**Fix**: Use a higher test iteration number (e.g., `v1.0.0-test.2` instead of
-`v1.0.0-test.1`). For production, you cannot re-publish the same version — increment
-the patch version.
-
-### Invalid package metadata
-
-**Symptom**: `twine check` fails during the build job.
-
-**Fix**: Check `pyproject.toml` for missing required fields (`description`, `authors`,
-`license`, etc.) and ensure the version string is PEP 440-compliant.
-
-### Version mismatch between tag and source
-
-**Symptom**: The build job fails with "Version mismatch" for a production tag.
-
-**Fix**: Update `pyproject.toml`, `__init__.py`, and `extension.json` to match the
-production tag version before pushing the tag.
-
-### Wheel installation failure
-
-**Symptom**: The smoke-test step in the build job fails.
-
-**Fix**: Check that all runtime dependencies in `pyproject.toml` are available on
-PyPI and that `src/rendereye_mcp/__main__.py` exports `main`.
-
-### Dependency resolution on TestPyPI
-
-**Symptom**: `pip install` from TestPyPI fails because a dependency is not mirrored.
-
-**Fix**: Add `--extra-index-url https://pypi.org/simple/` as shown above.
-
----
-
-## What Has and Has Not Been Tested
-
-| Item | Status |
-|---|---|
-| Tag classification logic | ✅ Tested (unit tests) |
-| Version normalization | ✅ Tested (PEP 440 validation) |
-| Destination isolation | ✅ Tested (production/test/invalid cannot cross) |
-| Workflow YAML structure | ✅ Tested (separate jobs, no cross-publishing) |
-| Wheel build and smoke test | ✅ Tested locally via `uv build` |
-| `twine check` metadata validation | ✅ Passes locally |
-| OIDC Trusted Publisher registration | ⏳ Pending external setup (PyPI + TestPyPI accounts) |
-| Actual TestPyPI upload | ⏳ Pending Trusted Publisher registration |
-| Actual PyPI upload | ⏳ Pending TestPyPI validation and explicit authorization |
-| Post-upload installation from TestPyPI | ⏳ Pending upload |
-
-The end-to-end publishing flow is **not verified** until a real TestPyPI upload
-succeeds. OIDC authentication cannot be fully tested without contacting the index.
+The `publish` job checks that no release exists for the tag before creating one.
+To republish, delete the existing release on GitHub before re-running the workflow.
