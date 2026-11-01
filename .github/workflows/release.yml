@@ -164,16 +164,14 @@ jobs:
           NAME="${{ steps.ver.outputs.name }}"
           EXT="${{ matrix.archive }}"
           [[ -f "dist/${NAME}.${EXT}" ]] || { echo "ERROR: archive missing: dist/${NAME}.${EXT}"; exit 1; }
-          cd dist
-          sha256sum "${NAME}.${EXT}" > "${NAME}.sha256"
-          cat "${NAME}.sha256"
+          sha256sum "dist/${NAME}.${EXT}" > "dist/${NAME}.sha256"
+          cat "dist/${NAME}.sha256"
 
       - name: Verify checksum
         shell: bash
         run: |
           NAME="${{ steps.ver.outputs.name }}"
-          cd dist
-          sha256sum --check "${NAME}.sha256"
+          sha256sum --check "dist/${NAME}.sha256"
           echo "Checksum verified"
 
       - name: Upload artifact
