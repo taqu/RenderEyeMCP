@@ -2,8 +2,7 @@
 
 # MCP tool reference
 
-RenderEyeMCP registers **58 tools** (`src/rendereye_mcp/server.py`). This reference was
-checked against those registrations. You normally do not call tools yourself; the agent
+RenderEyeMCP registers **58 tools**. You normally do not call tools yourself; the agent
 does. Knowing them helps you write precise prompts and read the agent's transcript.
 
 - [Conventions](#conventions)
