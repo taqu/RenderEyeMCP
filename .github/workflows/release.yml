@@ -143,7 +143,7 @@ jobs:
         run: |
           NAME="${{ steps.ver.outputs.name }}"
           mkdir -p dist
-          zip -r "dist/${NAME}.zip" "${NAME}/"
+          tar -caf "dist/${NAME}.zip" "${NAME}/"
           [[ -f "dist/${NAME}.zip" ]] || { echo "ERROR: archive not created: dist/${NAME}.zip"; exit 1; }
           ls -lh "dist/${NAME}.zip"
 
