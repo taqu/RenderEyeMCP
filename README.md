@@ -1,6 +1,7 @@
 [English](README.md) | [日本語](README.ja.md)
 
 # RenderEyeMCP
+![rendereye console](docs/ss00.jpg)
 
 **Let your AI coding agent look at the capture you already have open in RenderDoc.**
 
