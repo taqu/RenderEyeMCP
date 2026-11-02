@@ -31,7 +31,7 @@ No Python, pip, or uv is required to run RenderEyeMCP.
 
 ## Install on Windows
 
-1. Download the latest `rendereye-mcp_<version>_windows_amd64.zip` from the
+1. Download the latest `RenderEyeMCP-v<version>-windows-amd64.zip` from the
    [GitHub Releases](https://github.com/taqu/RenderEyeMCP/releases) page.
 
 2. Extract the archive to a permanent directory, for example:
@@ -67,14 +67,14 @@ No Python, pip, or uv is required to run RenderEyeMCP.
 
 ## Install on Linux
 
-1. Download the latest `rendereye-mcp_<version>_linux_amd64.tar.gz` from the
+1. Download the latest `RenderEyeMCP-v<version>-linux-amd64.tar.gz` from the
    [GitHub Releases](https://github.com/taqu/RenderEyeMCP/releases) page.
 
 2. Extract the archive to a permanent directory:
 
    ```bash
    mkdir -p ~/tools/rendereye-mcp
-   tar -xzf rendereye-mcp_*_linux_amd64.tar.gz -C ~/tools/rendereye-mcp --strip-components=1
+   tar -xzf RenderEyeMCP-v*-linux-amd64.tar.gz -C ~/tools/rendereye-mcp --strip-components=1
    ```
 
 3. Run the installer:

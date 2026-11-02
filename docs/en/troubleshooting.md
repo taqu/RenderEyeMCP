@@ -2,12 +2,11 @@
 
 # Troubleshooting
 
-Start with:
+Start by checking each layer:
 
 ```powershell
-rendereye-mcp doctor                      # installation, .env, RenderDoc, extension, service
-rendereye-mcp doctor --agent claude-code  # also checks that agent's configuration
-rendereye-mcp service status              # is the shared service listening?
+rendereye-mcp version          # is the binary working?
+rendereye-mcp service          # start the service manually to see its log
 ```
 
 Then find the layer that fails: **agent ↔ MCP server** (stdio), **MCP server ↔ shared
@@ -18,46 +17,28 @@ service** (TCP), **service ↔ RenderDoc extension** (TCP), **extension ↔ repl
 
 ### `rendereye-mcp` is not recognized
 
-- uv: run `uv tool update-shell`, then open a new terminal.
-- pip/venv: call the full path,
-  `& "$env:LOCALAPPDATA\RenderEyeMCP\venv\Scripts\rendereye-mcp.exe"`.
+The binary must be run by full path. Configure your coding agent with the full path to
+`rendereye-mcp.exe` as described in [Configuration](configuration.md). You can also add
+the directory to your PATH if you prefer to run it from a terminal.
 
-### `RenderDoc not found` during setup
+### `RenderDoc not found` during extension installation
 
-Setup only checks `%ProgramFiles%\RenderDoc` and `%ProgramFiles(x86)%\RenderDoc`. Set the
-path in `.env` (`RENDEREYE_RENDERDOC_EXE=D:\Tools\RenderDoc\qrenderdoc.exe`). Inspecting a
-capture you opened yourself does not depend on this setting.
+The installer copies the extension to `%APPDATA%\qrenderdoc\extensions\rendereye\`
+and does not search for RenderDoc. If you see a different error, verify that the
+`extensions\` directory exists in the same folder as `install.ps1`.
 
 ### RenderDoc version is older than 1.46
 
 The extension declares `minimum_renderdoc: 1.46`; older RenderDoc versions will not load
 it. Update RenderDoc.
 
-### `RENDEREYE_ENV_FILE` is not set / points elsewhere
-
-Run `rendereye-mcp setup` again, then open a new terminal **and restart the agent**.
-Processes started before setup do not see the new user variable.
-
-### Python errors when installing
-
-RenderEyeMCP needs Python 3.11+. With uv this is handled automatically. With pip, check
-`python --version` inside the venv.
-
-### `UnicodeEncodeError` in command output
-
-Fixed in this release for the `rendereye-mcp` command. If you script RenderEyeMCP
-modules directly on a non-UTF-8 console (for example cp932), set
-`PYTHONIOENCODING=utf-8`.
-
 ## Connection problems
 
 ### The agent says the server failed to start
 
 1. Check the `command` path in the agent config exists (`Test-Path <path>`).
-2. `rendereye-mcp doctor --agent <agent>`.
+2. Run `rendereye-mcp version` from that path to confirm the binary works.
 3. Claude Code: `claude --debug` shows the server's stderr. Codex: see its log output.
-4. Configured with `setup-agent` from a different installation? Re-run `setup-agent`
-   with the `rendereye-mcp` you actually use (add `--force` to replace the entry).
 
 ### Tools appear, but no RenderDoc session is found
 
@@ -67,35 +48,33 @@ modules directly on a non-UTF-8 console (for example cp932), set
 1. Is the extension enabled? RenderDoc → **Tools → Manage Extensions** → RenderEyeMCP
    **Loaded** and **Always Load**. RenderDoc's log (`%TEMP%\RenderDoc\RenderDoc_*.log`)
    should contain `Automatically loading extension "rendereye"`.
-2. Was the extension installed for this user? `doctor` shows its folder.
+2. Was the extension installed for this user? Check that
+   `%APPDATA%\qrenderdoc\extensions\rendereye\` contains `__init__.py` and
+   `extension.json`.
 3. Wait up to 30 seconds — the extension reconnects with back-off.
 4. Ports: if you changed `RENDEREYE_IPC_PORT`, RenderDoc must see the same value in its
-   own environment (see [Configuration](configuration.md#environment-settings-env)).
+   own environment (see [Configuration](configuration.md#environment-settings)).
 5. A firewall or security tool blocking loopback TCP on port 37020.
 
 ### The shared service is unavailable
 
-`rendereye-mcp service status` says `not running`, or the agent reports
-`Shared service failed to start within 30s`:
+The agent reports `Shared service failed to start within 30s`:
 
 - Another program may use port 37020. Check with
   `netstat -ano | findstr :37020`.
 - Run the service in the foreground to see its log:
 
   ```powershell
-  rendereye-mcp service stop
-  $env:RENDEREYE_LOG_LEVEL = "DEBUG"
-  rendereye-mcp service run
+  $env:RENDEREYE_LOG_LEVEL = "debug"
+  rendereye-mcp service
   ```
 
   Leave it running and start the agent; it connects to this service.
-- `status` reporting a *stale ready file* means a previous service ended without cleaning
-  up. `rendereye-mcp service stop` removes it.
 
 ### Several agents conflict
 
 They should not: all agents share one service. Do not configure different ports per
-agent. If one agent hangs, `rendereye-mcp service stop` and restart the agents.
+agent. If one agent hangs, kill the `rendereye-mcp service` process and restart the agents.
 
 ### Connection lost after RenderDoc restarts
 
@@ -133,9 +112,8 @@ reopening captures, ask the agent to look them up again.
    RenderDoc's Event Browser.
 2. Make sure you clicked in the RenderDoc window that is connected (check the
    `process_id` in `list_renderdoc_sessions`).
-3. If the IDs still differ, this is a known open issue observed once during validation;
-   please report it with RenderDoc's version, how the capture was opened and the
-   RenderEyeMCP log.
+3. If the IDs still differ, please report it with RenderDoc's version, how the capture
+   was opened and the RenderEyeMCP log.
 
 ### `event_not_selected`
 
@@ -164,11 +142,11 @@ that event in RenderDoc; RenderEyeMCP never changes the selection.
 
 | Component | Log |
 |-----------|-----|
-| MCP server (`rendereye-mcp serve`) | stderr, captured by the agent (`claude --debug`, Codex logs) |
-| Shared service | Not written to a file when started automatically. Run `rendereye-mcp service run` in a terminal to see it (above) |
+| MCP server (`rendereye-mcp`) | stderr, captured by the agent (`claude --debug`, Codex logs) |
+| Shared service | Not written to a file when started automatically. Run `rendereye-mcp service` in a terminal to see it (above) |
 | RenderDoc extension and RenderDoc | `%TEMP%\RenderDoc\RenderDoc_*.log` |
 
-Set `RENDEREYE_LOG_LEVEL=DEBUG` in `.env` (then `rendereye-mcp service stop` and
+Set `RENDEREYE_LOG_LEVEL=debug` in a `.env` file (then kill the service process and
 restart the agent) for more detail.
 
 **Telling the layers apart**
@@ -179,9 +157,9 @@ restart the agent) for more detail.
   the capture.
 - `extension_error`, `unsupported`, `timeout` → replay layer inside RenderDoc.
 
-**For a bug report** include: OS version, RenderDoc version, `rendereye-mcp --version`,
-coding agent and version, graphics API of the capture, `rendereye-mcp doctor` output,
-the failing prompt or tool call and its result, and relevant log excerpts.
+**For a bug report** include: OS version, RenderDoc version, `rendereye-mcp version`
+output, coding agent and version, graphics API of the capture, the failing prompt or
+tool call and its result, and relevant log excerpts.
 
 ## Security and privacy
 

@@ -35,8 +35,7 @@ AIコーディングエージェント  ->  根拠に基づくデバッグ支援
 
 ## できること
 
-Windows 11上のRenderDoc 1.46で、実際のD3D12 Captureを使って動作を確認しています
-(詳細は[リリース準備状況](docs/release_readiness.md)、英語)。
+Windows 11上のRenderDoc 1.46で、実際のD3D12 Captureを使って動作を確認しています。
 
 - **RenderDocセッションの検出** — 拡張機能が読み込まれたRenderDoc GUIの一覧、各GUIで
   開いているCapture、接続状態。
@@ -70,7 +69,7 @@ RenderEyeMCPはRenderDocの代替でもプロファイラでもなく、バグ�
 
 | 項目 | 状況 |
 |------|------|
-| Windows 11 + RenderDoc 1.46(D3D12 Capture) | 実機検証済み(Phase 12) |
+| Windows 11 + RenderDoc 1.46(D3D12 Capture) | 実機検証済み |
 | Windows 10 | 動作する見込み。未検証 |
 | Vulkan / D3D11 / OpenGL Capture | RenderDocのAPI共通インターフェース経由で動作する見込み。実機未検証 |
 | Linux | CIでユニットテストは成功。RenderDocとの実機検証なし。ウィンドウのフォーカス/クローズはWindows専用 |
@@ -79,43 +78,64 @@ RenderEyeMCPはRenderDocの代替でもプロファイラでもなく、バグ�
 
 ## 必要なもの
 
-- ホスト側に **Python 3.11以上**(拡張機能はRenderDoc内蔵のPythonで動き、追加パッケージは
-  不要です)。
-- RenderDoc **1.46**。
+- RenderDoc **1.46**以上。
 - MCP対応のコーディングエージェント。セットアップの自動化と動作確認は
   **Claude Code** と **Codex** で行っています。Cursor、VS Code(GitHub Copilot)、
   Gemini CLI向けの設定も生成できますが、実際のクライアントでは未確認です。
+- `rendereye-mcp` の実行にPythonやその他のランタイムは不要です。RenderDoc拡張機能は
+  RenderDoc内蔵のPythonインタープリターを使います。
 
 ## かんたんインストール(Windows)
 
-> まだ公開リリースはありません。リリースされるまでは以下のようにソースから
-> インストールしてください。リリース後は`.whl`ファイルを同じ手順でインストールできます。
+1. [GitHub Releases](https://github.com/taqu/RenderEyeMCP/releases)ページから
+   最新の `RenderEyeMCP-v<バージョン>-windows-amd64.zip` をダウンロードします。
 
-```powershell
-# 1. uvをインストール(未導入の場合)
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+2. アーカイブを恒久的なディレクトリに展開します。例: `C:\Tools\RenderEyeMCP\`
 
-# 2. ソースからRenderEyeMCPをインストール(または: uv tool install .\rendereye_mcp-1.0.0-py3-none-any.whl)
-git clone https://github.com/taqu/RenderEyeMCP.git
-cd RenderEyeMCP
-uv tool install .
+3. そのディレクトリでPowerShellを開き、インストーラーを実行します:
 
-# 3. 設定: .envファイル作成、RenderDocの検出、RenderDoc拡張機能のインストール
-rendereye-mcp setup
+   ```powershell
+   .\install.ps1
+   ```
+
+   インストーラーがRenderDoc拡張機能を
+   `%APPDATA%\qrenderdoc\extensions\rendereye\` にコピーし、
+   コーディングエージェントの設定スニペットを出力します。
+
+4. RenderDocで **Tools → Manage Extensions** を開き、**RenderEyeMCP** を選んで
+   **Always Load** を有効にします。
+
+詳しい手順とLinuxでの注意点は[インストール](docs/ja/installation.md)を参照してください。
+
+## コーディングエージェントの設定
+
+### Claude Code
+
+`~/.claude.json`(ユーザースコープ)またはプロジェクトの `.mcp.json`(プロジェクトスコープ)
+に追加します。パスは `rendereye-mcp.exe` の実際の場所に置き換えてください。
+
+```json
+{
+  "mcpServers": {
+    "rendereye": {
+      "type": "stdio",
+      "command": "C:\\Tools\\RenderEyeMCP\\rendereye-mcp.exe"
+    }
+  }
+}
 ```
 
-**新しい**ターミナルを開き、エージェントを接続します。
+### Codex
 
-```powershell
-rendereye-mcp setup-agent claude-code   # または: codex
-rendereye-mcp doctor --agent claude-code
+`~/.codex/config.toml` に追加します。
+
+```toml
+[mcp_servers.rendereye]
+command = "C:\\Tools\\RenderEyeMCP\\rendereye-mcp.exe"
 ```
 
-最後にRenderDocで **Tools → Manage Extensions** を開き、**RenderEyeMCP** を選んで
-**Always Load** を有効にします。その後コーディングエージェントを再起動してください。
-
-詳しい手順、Linuxでの注意点、pipだけを使う方法は[インストール](docs/ja/installation.md)、
-エージェントの設定は[設定](docs/ja/configuration.md)を参照してください。
+インストーラー(`install.ps1` / `install.sh`)が実際のパスに合わせたスニペットを出力します。
+詳細は[設定](docs/ja/configuration.md)を参照してください。
 
 ## 使ってみる
 
@@ -140,28 +160,25 @@ rendereye-mcp doctor --agent claude-code
 | MCP Toolリファレンス | [tools.md](docs/en/tools.md) | [tools.md](docs/ja/tools.md) |
 | トラブルシューティング | [troubleshooting.md](docs/en/troubleshooting.md) | [troubleshooting.md](docs/ja/troubleshooting.md) |
 | アーキテクチャ | [architecture.md](docs/en/architecture.md) | [architecture.md](docs/ja/architecture.md) |
+| リリースガイド | [publishing.md](docs/en/publishing.md) | [publishing.md](docs/ja/publishing.md) |
 
-開発者向け資料(英語のみ): [開発ガイド](docs/development.md)、
-[IPCプロトコル](docs/ipc_protocol.md)、[RenderDoc連携](docs/renderdoc_integration.md)、
-[リリース手順](docs/releasing.md)、[リリース準備状況](docs/release_readiness.md)。
+## 開発とビルド
 
-## トラブルシューティング
+RenderEyeMCPはGoで書かれています。ソースからビルドするには:
 
-まず`rendereye-mcp doctor`を実行してください。よくある原因(拡張機能が有効になって
-いない、セットアップ後にエージェントを再起動していない、RenderDocで何も選択していない)
-は[トラブルシューティング](docs/ja/troubleshooting.md)にまとめています。
-
-## コントリビュート
-
-[CONTRIBUTING.md](CONTRIBUTING.md)(英語)を参照してください。セキュリティに関する報告は
-[SECURITY.md](SECURITY.md)へ。
-
-```powershell
-uv sync
-uv run pytest
-uv run ruff check src/ tests/
-uv run python scripts/check_docs.py
+```bash
+git clone https://github.com/taqu/RenderEyeMCP.git
+cd RenderEyeMCP
+go build ./cmd/rendereye-mcp/
+go test ./...
+go vet ./...
 ```
+
+リリースワークフロー(`.github/workflows/release.yml`)がWindows x64とLinux x64向けの
+バイナリをビルドし、アーカイブを組み立て、`v*`タグのプッシュ時にGitHub Releaseを公開します。
+
+[CONTRIBUTING.md](CONTRIBUTING.md)を参照してください。セキュリティに関する報告は
+[SECURITY.md](SECURITY.md)へ。
 
 ## ライセンス
 

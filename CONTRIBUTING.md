@@ -4,39 +4,35 @@ Thanks for helping. Issues and pull requests are welcome in English or Japanese.
 
 ## Development setup
 
-```powershell
+```bash
 git clone https://github.com/taqu/RenderEyeMCP.git
 cd RenderEyeMCP
-uv sync                      # Python 3.11+ and dev dependencies
-uv run rendereye-mcp --help
+go build ./cmd/rendereye-mcp/
+go test ./...
+go vet ./...
 ```
 
-More detail (project layout, running the service, installing the extension from source):
-[docs/development.md](docs/development.md). Architecture:
-[docs/en/architecture.md](docs/en/architecture.md).
+Architecture overview: [docs/en/architecture.md](docs/en/architecture.md).
 
 ## Checks to run before a pull request
 
-```powershell
-uv run pytest                          # unit tests
-uv run ruff check src/ tests/          # lint (CI fails on any finding)
-uv run python scripts/check_docs.py    # documentation links and EN/JA parity
+```bash
+go test ./...
+go vet ./...
 ```
 
-CI runs the same checks on Windows and Ubuntu with Python 3.11 and 3.12, builds the
-wheel and installs it into a clean virtual environment.
+CI runs `go test ./...` and `go vet ./...` on Ubuntu. It also builds Windows and Linux
+binaries and assembles the release archives.
 
-Tests that need RenderDoc's `renderdoc` Python module are skipped outside RenderDoc.
-If you change code that talks to RenderDoc (`src/rendereye_mcp/_extension_data/`),
-also check it against a real RenderDoc 1.46 GUI and say in the pull request what you
-ran. `docs/renderdoc_api_compatibility.md` lists what has been verified.
+Tests that need RenderDoc's embedded Python API are skipped in CI.
+If you change the RenderDoc extension (`extensions/rendereye/`), also test it against a
+real RenderDoc 1.46 GUI and describe in the pull request what you ran.
 
 ## Guidelines
 
 - Keep pull requests focused; one topic per PR.
-- `extensions/rendereye/` and `src/rendereye_mcp/_extension_data/` must stay identical.
-- The extension runs in RenderDoc's embedded Python: standard library only, and no
-  syntax newer than Python 3.6 (the extension's compatibility target).
+- The extension (`extensions/rendereye/`) runs inside RenderDoc's embedded Python
+  interpreter: standard library only, and no syntax newer than Python 3.6.
 - Inspection tools must stay read-only: never change the user's selected event or
   loaded capture.
 - User-facing documentation exists in English (`docs/en/`) and Japanese (`docs/ja/`).
@@ -47,5 +43,5 @@ ran. `docs/renderdoc_api_compatibility.md` lists what has been verified.
 ## Reporting bugs
 
 Use the bug report template. Include the RenderDoc version, the graphics API of the
-capture, the coding agent, and `rendereye-mcp doctor` output. Security problems:
+capture, the coding agent, and `rendereye-mcp version` output. Security problems:
 see [SECURITY.md](SECURITY.md).

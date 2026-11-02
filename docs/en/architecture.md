@@ -2,17 +2,15 @@
 
 # Architecture
 
-For contributors and advanced users. Protocol details are in
-[IPC protocol](../ipc_protocol.md); RenderDoc API usage in
-[RenderDoc integration](../renderdoc_integration.md).
+For contributors and advanced users.
 
 ## Overview
 
 ```mermaid
 flowchart TB
-    A1[Coding agent A] -- MCP stdio --> B1["rendereye-mcp serve<br/>(MCP server / bridge)"]
-    A2[Coding agent B] -- MCP stdio --> B2["rendereye-mcp serve<br/>(MCP server / bridge)"]
-    B1 -- "TCP 127.0.0.1:37020<br/>JSON lines" --> S["Shared IPC service<br/>(rendereye-mcp service run)"]
+    A1[Coding agent A] -- MCP stdio --> B1["rendereye-mcp<br/>(MCP server / bridge)"]
+    A2[Coding agent B] -- MCP stdio --> B2["rendereye-mcp<br/>(MCP server / bridge)"]
+    B1 -- "TCP 127.0.0.1:37020<br/>JSON lines" --> S["Shared IPC service<br/>(rendereye-mcp service)"]
     B2 -- "TCP 127.0.0.1:37020" --> S
     E1["RenderDoc extension<br/>(inside qrenderdoc)"] -- "TCP 127.0.0.1:37020<br/>token-authenticated" --> S
     E1 --- R1["RenderDoc GUI<br/>CaptureContext / replay"]
@@ -22,13 +20,13 @@ flowchart TB
 
 | Component | Process | Code |
 |-----------|---------|------|
-| MCP server (bridge) | One per agent, started by the agent: `rendereye-mcp serve` | `__main__.py`, `server.py`, `bridge/client.py` |
-| Shared IPC service | One per user session, started on demand: `rendereye-mcp service run` | `service/`, `ipc/`, `captures/`, `sessions/`, `instances/` |
-| RenderDoc extension | Inside each RenderDoc GUI (embedded Python, stdlib only) | `src/rendereye_mcp/_extension_data/` (mirrored in `extensions/rendereye/`) |
+| MCP server (bridge) | One per agent, started by the agent: `rendereye-mcp` | `cmd/rendereye-mcp/`, `internal/bridge/` |
+| Shared IPC service | One per user session, started on demand: `rendereye-mcp service` | `internal/server/`, `internal/captures/`, `internal/sessions/`, `internal/instances/` |
+| RenderDoc extension | Inside each RenderDoc GUI (embedded Python, stdlib only) | `extensions/rendereye/` |
 
 ## Responsibilities
 
-**MCP server (bridge).** Registers the 38 MCP tools, speaks MCP over stdio, and forwards
+**MCP server (bridge).** Registers the 58 MCP tools, speaks MCP over stdio, and forwards
 every tool call to the shared service as a `tool_call` message. It holds no RenderDoc
 state. Logs go to stderr so stdout stays clean for MCP. Image results
 (`get_texture_image`) are converted to MCP image content here.
@@ -37,7 +35,7 @@ state. Logs go to stderr so stdout stays clean for MCP. Image results
 It authenticates extensions, keeps the registry of RenderDoc GUI connections
 (`ExtensionConnectionManager`), routes inspection requests to the right extension,
 runs the capture-file registry and managed-session features, and executes tool calls
-for all bridges (`service/tools.py`).
+for all bridges.
 
 **RenderDoc extension.** Registered by RenderDoc through `register(version, pyrenderdoc)`.
 It connects to the service, reports GUI state (capture loaded/loading, path), and
@@ -47,19 +45,19 @@ only the standard library.
 
 ## Lifecycle
 
-1. An agent starts `rendereye-mcp serve`. The bridge loads `.env` (via
+1. An agent starts `rendereye-mcp`. The bridge loads `.env` (via
    `RENDEREYE_ENV_FILE`) and probes the service port.
-2. If no service answers, the bridge takes a startup lock
-   (`%TEMP%\rendereye_mcp_startup.lock`) so only one bridge launches the service, starts
-   `python -m rendereye_mcp service run` detached, and waits up to 30 s.
+2. If no service answers, the bridge takes a startup lock so only one bridge launches
+   the service, starts `rendereye-mcp service` detached, and waits up to 30 s.
 3. The service writes a per-run auth token to `%TEMP%\rendereye_mcp_token.txt` and a
-   ready file `%TEMP%\rendereye_mcp_service.json`, then listens.
+   ready file, then listens.
 4. Each RenderDoc extension reads the token, sends `hello` and `register_instance`, then
    heartbeats every few seconds. On failure it retries with exponential back-off
    (capped at 30 s), so RenderDoc and the agents can start in any order.
 5. Bridges register as `mcp_bridge` clients and send tool calls.
-6. When agents exit, their bridges disconnect. The service keeps running until
-   `rendereye-mcp service stop`; it never closes RenderDoc windows on shutdown.
+6. When agents exit, their bridges disconnect. The service keeps running until it
+   is terminated (e.g. `taskkill /F /IM rendereye-mcp.exe`); it never closes
+   RenderDoc windows on shutdown.
 
 ## GUI session discovery and state synchronization
 
@@ -140,12 +138,11 @@ those GUI-thread callbacks. All socket writes happen on the IPC worker.
 
 ## Extension installation and loading
 
-`rendereye-mcp setup` copies the packaged files from `rendereye_mcp/_extension_data/`
-to RenderDoc's per-user extension folder as `rendereye/` (`rendereye_init.py` becomes
-`__init__.py`). RenderDoc discovers it through `extension.json`
+The installer (`install.ps1` on Windows, `install.sh` on Linux) copies the extension
+files from the extracted archive into RenderDoc's per-user extension folder as `rendereye/`.
+RenderDoc discovers it through `extension.json`
 (`extension_api: 1`, `minimum_renderdoc: 1.46`). The user enables it once under
-**Tools → Manage Extensions** (*Always Load*). The tests enforce that
-`extensions/rendereye/` and `_extension_data/` stay identical.
+**Tools → Manage Extensions** (*Always Load*).
 
 ## Security
 
