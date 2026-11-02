@@ -111,7 +111,7 @@ RenderEyeMCPはRenderDocの代替でもプロファイラでもなく、バグ�
 
 ### Claude Code
 
-`~/.claude.json`(ユーザースコープ)またはプロジェクトの `.mcp.json`(プロジェクトスコープ)
+`~/.settings.json`(ユーザースコープ)またはプロジェクトの `.mcp.json`(プロジェクトスコープ)
 に追加します。パスは `rendereye-mcp.exe` の実際の場所に置き換えてください。
 
 ```json

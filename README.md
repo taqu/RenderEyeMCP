@@ -111,7 +111,7 @@ Full instructions and Linux notes: [Installation](docs/en/installation.md).
 
 ### Claude Code
 
-Add to `~/.claude.json` (user scope) or `.mcp.json` in your project (project scope).
+Add to `~/.settings.json` (user scope) or `.mcp.json` in your project (project scope).
 Replace the path with the actual location of `rendereye-mcp.exe`:
 
 ```json
