@@ -2,12 +2,11 @@
 
 # トラブルシューティング
 
-まず次を実行します。
+まず各レイヤーを確認します。
 
 ```powershell
-rendereye-mcp doctor                      # インストール、.env、RenderDoc、拡張機能、サービス
-rendereye-mcp doctor --agent claude-code  # 指定したエージェントの設定も確認
-rendereye-mcp service status              # 共有サービスが待ち受けているか
+rendereye-mcp version          # バイナリが動いているか
+rendereye-mcp service          # サービスを手動で起動してログを確認
 ```
 
 次に、どのレイヤーで失敗しているかを切り分けます。**エージェント ↔ MCPサーバー**(stdio)、
@@ -18,15 +17,9 @@ rendereye-mcp service status              # 共有サービスが待ち受けて
 
 ### `rendereye-mcp`が見つからない
 
-- uv: `uv tool update-shell`を実行し、新しいターミナルを開きます。
-- pip/venv: フルパスで呼び出します。
-  `& "$env:LOCALAPPDATA\RenderEyeMCP\venv\Scripts\rendereye-mcp.exe"`
-
-### setupで`RenderDoc not found`と表示される
-
-setupが探すのは`%ProgramFiles%\RenderDoc`と`%ProgramFiles(x86)%\RenderDoc`だけです。
-`.env`にパスを設定してください(`RENDEREYE_RENDERDOC_EXE=D:\Tools\RenderDoc\qrenderdoc.exe`)。
-自分で開いたCaptureを調べるだけなら、この設定は関係ありません。
+バイナリはフルパスで実行してください。[設定](configuration.md)の説明どおり、
+コーディングエージェントの設定に`rendereye-mcp.exe`へのフルパスを指定してください。
+ターミナルから実行したい場合は、バイナリのあるディレクトリをPATHに追加することもできます。
 
 ### RenderDocのバージョンが1.46より古い
 
@@ -35,30 +28,17 @@ RenderDocを更新してください。
 
 ### `RENDEREYE_ENV_FILE`が未設定 / 別の場所を指している
 
-`rendereye-mcp setup`を再実行し、新しいターミナルを開いて、**エージェントも再起動**して
-ください。setupより前に起動したプロセスには、新しいユーザー環境変数が見えません。
-
-### インストール時のPythonエラー
-
-RenderEyeMCPにはPython 3.11以上が必要です。uvなら自動で用意されます。pipの場合は
-venv内で`python --version`を確認してください。
-
-### コマンド出力で`UnicodeEncodeError`が出る
-
-`rendereye-mcp`コマンドについては今回のリリースで修正済みです。UTF-8以外のコンソール
-(cp932など)でRenderEyeMCPのモジュールを直接スクリプトから使う場合は、
-`PYTHONIOENCODING=utf-8`を設定してください。
+バイナリと同じディレクトリにある`.env`ファイルを`RENDEREYE_ENV_FILE`環境変数で指定します。
+設定を変えた後は、サービスプロセスを終了してエージェントを再起動してください。
 
 ## 接続の問題
 
 ### エージェントが「サーバーの起動に失敗した」と言う
 
 1. エージェント設定の`command`のパスが存在するか確認します(`Test-Path <path>`)。
-2. `rendereye-mcp doctor --agent <agent>`を実行します。
+2. そのパスで`rendereye-mcp version`を実行してバイナリが動くか確認します。
 3. Claude Codeでは`claude --debug`でサーバーのstderrを確認できます。Codexはそのログを
    確認します。
-4. 別のインストールから`setup-agent`を実行していませんか? 実際に使う`rendereye-mcp`で
-   `setup-agent`を再実行してください(エントリを置き換えるには`--force`)。
 
 ### Toolは見えるが、RenderDocセッションが見つからない
 
@@ -69,36 +49,34 @@ venv内で`python --version`を確認してください。
    **Loaded**かつ**Always Load**になっているか確認します。RenderDocのログ
    (`%TEMP%\RenderDoc\RenderDoc_*.log`)に
    `Automatically loading extension "rendereye"`が出ているはずです。
-2. 拡張機能はこのユーザー向けにインストールされていますか? `doctor`がフォルダーを表示します。
+2. 拡張機能はこのユーザー向けにインストールされていますか?
+   `%APPDATA%\qrenderdoc\extensions\rendereye\`に`__init__.py`と`extension.json`が
+   あるか確認してください。
 3. 最大30秒待ってください。拡張機能は間隔を空けながら再接続します。
 4. ポート: `RENDEREYE_IPC_PORT`を変えた場合は、RenderDoc自身の環境変数にも同じ値が
-   必要です([設定](configuration.md#環境設定env)を参照)。
+   必要です([設定](configuration.md#環境変数の設定)を参照)。
 5. ファイアウォールやセキュリティソフトが、ポート37020のループバックTCPを遮断していないか。
 
 ### 共有サービスが使えない
 
-`rendereye-mcp service status`が`not running`を返す、またはエージェントが
-`Shared service failed to start within 30s`と報告する場合:
+エージェントが`Shared service failed to start within 30s`と報告する場合:
 
 - 他のプログラムがポート37020を使っている可能性があります。
   `netstat -ano | findstr :37020`で確認してください。
 - サービスをフォアグラウンドで動かすとログが見られます。
 
   ```powershell
-  rendereye-mcp service stop
-  $env:RENDEREYE_LOG_LEVEL = "DEBUG"
-  rendereye-mcp service run
+  $env:RENDEREYE_LOG_LEVEL = "debug"
+  rendereye-mcp service
   ```
 
   そのまま動かしておき、エージェントを起動すると、このサービスに接続します。
-- `status`が*stale ready file*と表示する場合は、以前のサービスが後始末をせずに終了して
-  います。`rendereye-mcp service stop`で削除できます。
 
 ### 複数のエージェントが競合する
 
 本来は競合しません。すべてのエージェントが1つのサービスを共有します。エージェントごとに
-別のポートを設定しないでください。いずれかが固まった場合は、`rendereye-mcp service stop`
-を実行してエージェントを再起動します。
+別のポートを設定しないでください。いずれかが固まった場合は、`rendereye-mcp service`プロセスを
+終了してエージェントを再起動します。
 
 ### RenderDocを再起動すると接続が切れる
 
@@ -136,8 +114,8 @@ IDは、それを取得したときに開いていたCaptureに属します。Ca
    Event BrowserのEIDを比べます。
 2. 接続中のRenderDocウィンドウでクリックしたか確認します(`list_renderdoc_sessions`の
    `process_id`で確認できます)。
-3. それでもIDが違う場合は、検証中に1回観測された既知の未解決事項です。RenderDocの
-   バージョン、Captureの開き方、RenderEyeMCPのログを添えて報告してください。
+3. それでもIDが違う場合は、RenderDocのバージョン、Captureの開き方、RenderEyeMCPの
+   ログを添えて報告してください。
 
 ### `event_not_selected`
 
@@ -166,12 +144,12 @@ RenderDocで選択してください。RenderEyeMCPが選択を変更するこ�
 
 | コンポーネント | ログ |
 |----------------|------|
-| MCPサーバー(`rendereye-mcp serve`) | stderr。エージェントが取得する(`claude --debug`、Codexのログ) |
-| 共有サービス | 自動起動時はファイルに書かれない。上記のとおりターミナルで`rendereye-mcp service run`を実行すると見られる |
+| MCPサーバー(`rendereye-mcp`) | stderr。エージェントが取得する(`claude --debug`、Codexのログ) |
+| 共有サービス | 自動起動時はファイルに書かれない。ターミナルで`rendereye-mcp service`を実行すると見られる |
 | RenderDoc拡張機能とRenderDoc | `%TEMP%\RenderDoc\RenderDoc_*.log` |
 
-詳しいログが必要なら`.env`で`RENDEREYE_LOG_LEVEL=DEBUG`を設定し、
-`rendereye-mcp service stop`の後にエージェントを再起動してください。
+詳しいログが必要なら`.env`で`RENDEREYE_LOG_LEVEL=debug`を設定し、サービスプロセスを
+終了してからエージェントを再起動してください。
 
 **レイヤーの見分け方**
 
@@ -182,9 +160,8 @@ RenderDocで選択してください。RenderEyeMCPが選択を変更するこ�
 - `extension_error`、`unsupported`、`timeout` → RenderDoc内部のリプレイレイヤー
 
 **バグ報告に含めてほしいもの:** OSのバージョン、RenderDocのバージョン、
-`rendereye-mcp --version`、コーディングエージェントとそのバージョン、CaptureのGraphics API、
-`rendereye-mcp doctor`の出力、失敗したプロンプトまたはTool呼び出しとその結果、関連する
-ログの抜粋。
+`rendereye-mcp version`の出力、コーディングエージェントとそのバージョン、CaptureのGraphics API、
+失敗したプロンプトまたはTool呼び出しとその結果、関連するログの抜粋。
 
 ## セキュリティとプライバシー
 

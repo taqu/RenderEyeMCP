@@ -11,7 +11,7 @@ inspects it. The agent does not open or reopen the capture.
 Follow [Installation](installation.md) and [Configuration](configuration.md). You should
 have:
 
-- `rendereye-mcp doctor` without `✗` lines,
+- `rendereye-mcp version` printing the version successfully,
 - the RenderEyeMCP extension enabled in RenderDoc (**Tools → Manage Extensions**,
   *Always Load*),
 - Claude Code or Codex configured and restarted.
@@ -73,12 +73,8 @@ returned by the tools) from **hypotheses** about what they mean.
 
 ## Validation
 
-This flow was run against a D3D12 capture in RenderDoc 1.46 on Windows 11 through the
-MCP stdio server (38 tools discovered; `get_current_capture`, `get_current_capture_info`,
-`get_selected_event`, all `get_pipeline_state` sections, `list_shaders` and
-`get_render_targets` returned data for a selected draw call). The event was selected
-through RenderDoc's Python API. In one earlier manual session the extension kept
-reporting the post-load event after a draw was clicked in the GUI; that observation is
-still being investigated (see [release readiness](../release_readiness.md)). If the agent
-reports a different event than the one you selected, see
-[Troubleshooting](troubleshooting.md#the-agent-reports-a-different-event-than-the-one-i-selected).
+This flow was validated against a D3D12 capture in RenderDoc 1.46 on Windows 11 (58 tools
+discovered; `get_current_capture`, `get_current_capture_info`, `get_selected_event`, all
+`get_pipeline_state` sections, `list_shaders` and `get_render_targets` returned data for
+a selected draw call). If the agent reports a different event than the one you selected,
+see [Troubleshooting](troubleshooting.md#the-agent-reports-a-different-event-than-the-one-i-selected).

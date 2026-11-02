@@ -1,6 +1,7 @@
 [English](README.md) | [日本語](README.ja.md)
 
 # RenderEyeMCP
+![rendereye console](docs/ss00.jpg)
 
 **Let your AI coding agent look at the capture you already have open in RenderDoc.**
 
@@ -34,8 +35,7 @@ event you have selected.
 
 ## What it can do
 
-Verified against a real D3D12 capture in RenderDoc 1.46 on Windows 11
-(see [release readiness](docs/release_readiness.md) for details):
+Verified against a real D3D12 capture in RenderDoc 1.46 on Windows 11:
 
 - **Find your RenderDoc session** — every running RenderDoc GUI with the extension
   loaded, the capture it has open, and whether it is connected.
@@ -69,7 +69,7 @@ bugs on its own. It gives the agent accurate data; you and the agent interpret i
 
 | Component | Status |
 |-----------|--------|
-| Windows 11 + RenderDoc 1.46 (D3D12 capture) | Validated live (Phase 12) |
+| Windows 11 + RenderDoc 1.46 (D3D12 capture) | Validated live |
 | Windows 10 | Expected to work, not validated |
 | Vulkan / D3D11 / OpenGL captures | Expected to work through RenderDoc's API-neutral interface, not validated live |
 | Linux | Unit tests pass in CI; no live RenderDoc validation. Window focus/close are Windows-only |
@@ -78,43 +78,66 @@ bugs on its own. It gives the agent accurate data; you and the agent interpret i
 
 ## Requirements
 
-- Python **3.11 or later** on the host (RenderDoc's embedded Python is used for the
-  extension; it needs no packages).
-- RenderDoc **1.46**.
-- An MCP-capable coding agent. Setup is automated and verified for **Claude Code** and
-  **Codex**; Cursor, VS Code (GitHub Copilot) and Gemini CLI configurations are generated
-  too but were not verified against the real clients.
+- RenderDoc **1.46** or later.
+- An MCP-capable coding agent. Setup is verified for **Claude Code** and **Codex**;
+  Cursor, VS Code (GitHub Copilot) and Gemini CLI configurations are generated too but
+  were not verified against the real clients.
+- No Python or other runtime is required to run `rendereye-mcp`. The RenderDoc extension
+  uses RenderDoc's own embedded Python interpreter.
 
-## Quick installation (Windows)
+## Quick start (Windows)
 
-```powershell
-# 1. Install uv (if you do not have it)
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+1. Download the latest `RenderEyeMCP-v<version>-windows-amd64.zip` from the
+   [GitHub Releases](https://github.com/taqu/RenderEyeMCP/releases) page.
 
-# 2. Install RenderEyeMCP from a source checkout (or: uv tool install .\rendereye_mcp-1.0.0-py3-none-any.whl)
-git clone https://github.com/taqu/RenderEyeMCP.git
-cd RenderEyeMCP
-uv tool install .
+2. Extract the archive to a permanent directory, for example `C:\Tools\RenderEyeMCP\`.
 
-# 3. Configure: creates the .env file, detects RenderDoc, installs the RenderDoc extension
-rendereye-mcp setup
+3. Open PowerShell in that directory and run the installer:
+
+   ```powershell
+   .\install.ps1
+   ```
+
+   The installer copies the RenderDoc extension to
+   `%APPDATA%\qrenderdoc\extensions\rendereye\` and prints the coding-agent
+   configuration snippet.
+
+4. In RenderDoc open **Tools → Manage Extensions**, select **RenderEyeMCP**, and enable
+   **Always Load**.
+
+Full instructions and Linux notes: [Installation](docs/en/installation.md).
+
+## Coding agent configuration
+
+### Claude Code
+
+Add to `~/.claude.json` (user scope) or `.mcp.json` in your project (project scope).
+Replace the path with the actual location of `rendereye-mcp.exe`:
+
+```json
+{
+  "mcpServers": {
+    "rendereye": {
+      "type": "stdio",
+      "command": "C:\\Tools\\RenderEyeMCP\\rendereye-mcp.exe"
+    }
+  }
+}
 ```
 
-Open a **new** terminal, then connect your agent:
+### Codex
 
-```powershell
-rendereye-mcp setup-agent claude-code   # or: codex
-rendereye-mcp doctor --agent claude-code
+Add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.rendereye]
+command = "C:\\Tools\\RenderEyeMCP\\rendereye-mcp.exe"
 ```
 
-Finally, in RenderDoc open **Tools → Manage Extensions**, select **RenderEyeMCP**, and
-enable **Always Load**. Restart the coding agent.
+The installer (`install.ps1` / `install.sh`) prints the correct snippet for your path.
+Full details: [Configuration](docs/en/configuration.md).
 
-Full instructions, Linux notes and a `pip`-only method:
-[Installation](docs/en/installation.md). Agent details:
-[Configuration](docs/en/configuration.md).
-
-## Quick usage
+## Basic usage
 
 1. Open a capture in RenderDoc (from your engine or with *File → Open Capture*).
 2. Select a draw call in the Event Browser.
@@ -137,27 +160,25 @@ The step-by-step walkthrough is in the [Quick Start](docs/en/quickstart.md).
 | MCP tool reference | [tools.md](docs/en/tools.md) | [tools.md](docs/ja/tools.md) |
 | Troubleshooting | [troubleshooting.md](docs/en/troubleshooting.md) | [troubleshooting.md](docs/ja/troubleshooting.md) |
 | Architecture | [architecture.md](docs/en/architecture.md) | [architecture.md](docs/ja/architecture.md) |
+| Release guide | [publishing.md](docs/en/publishing.md) | [publishing.md](docs/ja/publishing.md) |
 
-Contributor material (English only): [development guide](docs/development.md),
-[IPC protocol](docs/ipc_protocol.md), [RenderDoc integration](docs/renderdoc_integration.md),
-[release guide](docs/releasing.md), [release readiness](docs/release_readiness.md).
+## Development and building
 
-## Troubleshooting
+RenderEyeMCP is written in Go. To build from source:
 
-Run `rendereye-mcp doctor` first. The most common problems — the extension is not
-enabled, the agent was not restarted after setup, or nothing is selected in RenderDoc —
-are covered in [Troubleshooting](docs/en/troubleshooting.md).
+```bash
+git clone https://github.com/taqu/RenderEyeMCP.git
+cd RenderEyeMCP
+go build ./cmd/rendereye-mcp/
+go test ./...
+go vet ./...
+```
 
-## Contributing
+The release workflow (`.github/workflows/release.yml`) builds binaries for Windows x64
+and Linux x64, assembles the archives, and publishes a GitHub Release when a `v*` tag is
+pushed.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Security reports: [SECURITY.md](SECURITY.md).
-
-```powershell
-uv sync
-uv run pytest
-uv run ruff check src/ tests/
-uv run python scripts/check_docs.py
-```
 
 ## License
 

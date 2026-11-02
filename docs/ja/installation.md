@@ -32,7 +32,7 @@ RenderEyeMCPの実行にPython、pip、uvは不要です。
 ## Windowsへのインストール
 
 1. [GitHub Releases](https://github.com/taqu/RenderEyeMCP/releases)ページから
-   最新の `rendereye-mcp_<バージョン>_windows_amd64.zip` をダウンロードします。
+   最新の `RenderEyeMCP-v<バージョン>-windows-amd64.zip` をダウンロードします。
 
 2. アーカイブを恒久的なディレクトリに展開します。例:
 
@@ -68,13 +68,13 @@ RenderEyeMCPの実行にPython、pip、uvは不要です。
 ## Linuxへのインストール
 
 1. [GitHub Releases](https://github.com/taqu/RenderEyeMCP/releases)ページから
-   最新の `rendereye-mcp_<バージョン>_linux_amd64.tar.gz` をダウンロードします。
+   最新の `RenderEyeMCP-v<バージョン>-linux-amd64.tar.gz` をダウンロードします。
 
 2. アーカイブを恒久的なディレクトリに展開します:
 
    ```bash
    mkdir -p ~/tools/rendereye-mcp
-   tar -xzf rendereye-mcp_*_linux_amd64.tar.gz -C ~/tools/rendereye-mcp --strip-components=1
+   tar -xzf RenderEyeMCP-v*-linux-amd64.tar.gz -C ~/tools/rendereye-mcp --strip-components=1
    ```
 
 3. インストーラーを実行します:
