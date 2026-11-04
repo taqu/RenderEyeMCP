@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RenderEyeMCP Documentation</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0d1117;
+      color: #e6edf3;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .card {
+      text-align: center;
+      padding: 3rem 4rem;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      background: #161b22;
+      max-width: 480px;
+      width: 90%;
+    }
+    h1 { font-size: 1.75rem; margin-bottom: 0.5rem; }
+    .subtitle {
+      color: #8b949e;
+      font-size: 0.95rem;
+      margin-bottom: 2.5rem;
+    }
+    .lang-links { display: flex; gap: 1rem; justify-content: center; }
+    .lang-btn {
+      display: inline-block;
+      padding: 0.75rem 2rem;
+      border-radius: 6px;
+      text-decoration: none;
+      font-size: 1rem;
+      font-weight: 600;
+      transition: background 0.15s;
+    }
+    .lang-btn-en {
+      background: #1f6feb;
+      color: #fff;
+    }
+    .lang-btn-en:hover { background: #388bfd; }
+    .lang-btn-ja {
+      background: #21262d;
+      color: #e6edf3;
+      border: 1px solid #30363d;
+    }
+    .lang-btn-ja:hover { background: #30363d; }
+    .footer {
+      margin-top: 2rem;
+      font-size: 0.8rem;
+      color: #6e7681;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>RenderEyeMCP</h1>
+    <p class="subtitle">User Manual &amp; Tool Reference</p>
+    <div class="lang-links">
+      <a class="lang-btn lang-btn-en" href="en/index.html">English</a>
+      <a class="lang-btn lang-btn-ja" href="ja/index.html">日本語</a>
+    </div>
+    <p class="footer">Open <code>manual/index.html</code> — no internet connection required</p>
+  </div>
+</body>
+</html>

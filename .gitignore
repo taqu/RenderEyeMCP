@@ -168,6 +168,7 @@ venv.bak/
 
 # mkdocs/Zensical documentation
 /site
+/manual
 
 # mypy
 .mypy_cache/

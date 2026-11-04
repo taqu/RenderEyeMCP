@@ -1,0 +1,90 @@
+site_name: RenderEyeMCP Documentation
+site_dir: manual/en
+docs_dir: docs/en
+use_directory_urls: false
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+# Disable the default search plugin.
+# MkDocs Material search relies on a web worker that may fail under file://
+# in some browsers. Navigation and content work fully offline without it.
+plugins: []
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - tables
+  - admonition
+  - toc:
+      permalink: true
+
+hooks:
+  - docs/hooks.py
+
+validation:
+  links:
+    absolute_links: ignore
+    unrecognized_links: ignore
+    not_found: warn
+
+nav:
+  - Getting Started: index.md
+  - Quick Start: quickstart.md
+  - Installation and Configuration:
+      - Installation: installation.md
+      - Configuration: configuration.md
+  - MCP Tools: tools.md
+  - Graphics Debugging:
+      - Advanced Debugging Workflow: advanced-debugging.md
+      - Geometry Inspection: geometry.md
+  - GPU Performance Analysis: performance.md
+  - Example Prompts and Scenarios:
+      - Prompt Examples: prompts.md
+      - Scenarios:
+          - Scenario Index: examples/README.md
+          - A. Inspect an Open Capture: examples/active-capture.md
+          - B. Object Not Visible: examples/missing-object.md
+          - C. Missing Mesh: examples/missing-mesh.md
+          - D. Wrong Shader Resources: examples/shader-resources.md
+          - E. Black or Wrong Render Target: examples/render-target.md
+          - F. Depth Testing Problems: examples/depth-debugging.md
+          - G. Depth Rejection Analysis: examples/depth-rejection.md
+          - H. Wrong Compute Output: examples/compute-dispatch.md
+          - I. Compute Shader Debugging: examples/compute-debugging.md
+          - J. Expensive Draw Calls: examples/expensive-drawcalls.md
+          - K. GPU Bottleneck: examples/gpu-bottleneck.md
+          - L. Render Pass Performance: examples/render-pass-performance.md
+          - M. Geometry Performance: examples/geometry-performance.md
+          - N. Compute Performance: examples/compute-performance.md
+          - O. Pixel History: examples/pixel-history.md
+          - P. Shader Debugging: examples/shader-debugging.md
+          - Q. Post-VS Geometry: examples/post-vs-inspection.md
+          - R. Vertex Layout: examples/vertex-layout.md
+          - S. Vertex Debugging: examples/vertex-debugging.md
+  - Troubleshooting: troubleshooting.md
+  - Architecture and Development:
+      - Architecture: architecture.md
+      - Publishing: publishing.md

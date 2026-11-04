@@ -1,0 +1,91 @@
+site_name: RenderEyeMCP ドキュメント
+site_dir: manual/ja
+docs_dir: docs/ja
+use_directory_urls: false
+
+theme:
+  name: material
+  language: ja
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: ダークモードに切り替え
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: ライトモードに切り替え
+
+# デフォルトの検索プラグインを無効化。
+# MkDocs Materialの検索はWebワーカーを使用しており、ブラウザによってはfile://で
+# 動作しない場合があります。検索なしでもナビゲーションとコンテンツはオフラインで
+# 完全に機能します。
+plugins: []
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - tables
+  - admonition
+  - toc:
+      permalink: true
+
+hooks:
+  - docs/hooks.py
+
+validation:
+  links:
+    absolute_links: ignore
+    unrecognized_links: ignore
+    not_found: warn
+
+nav:
+  - はじめに: index.md
+  - クイックスタート: quickstart.md
+  - インストールと設定:
+      - インストール: installation.md
+      - 設定: configuration.md
+  - MCP Tool: tools.md
+  - グラフィックスデバッグ:
+      - 高度なデバッグワークフロー: advanced-debugging.md
+      - ジオメトリ検査: geometry.md
+  - GPUパフォーマンス分析: performance.md
+  - プロンプト例とシナリオ:
+      - プロンプト例: prompts.md
+      - シナリオ:
+          - シナリオ一覧: examples/README.md
+          - A. 開いているCaptureを調べる: examples/active-capture.md
+          - B. オブジェクトが表示されない: examples/missing-object.md
+          - C. メッシュが消えている: examples/missing-mesh.md
+          - D. 間違ったShaderリソース: examples/shader-resources.md
+          - E. 黒いまたは間違ったRender Target: examples/render-target.md
+          - F. 深度テストの問題: examples/depth-debugging.md
+          - G. 深度棄却の分析: examples/depth-rejection.md
+          - H. 間違ったCompute出力: examples/compute-dispatch.md
+          - I. Compute Shaderのデバッグ: examples/compute-debugging.md
+          - J. 重いDrawCall: examples/expensive-drawcalls.md
+          - K. GPUボトルネック: examples/gpu-bottleneck.md
+          - L. Render Passパフォーマンス: examples/render-pass-performance.md
+          - M. ジオメトリパフォーマンス: examples/geometry-performance.md
+          - N. Computeパフォーマンス: examples/compute-performance.md
+          - O. Pixel History: examples/pixel-history.md
+          - P. Shaderデバッグ: examples/shader-debugging.md
+          - Q. Post-VSジオメトリ: examples/post-vs-inspection.md
+          - R. 頂点レイアウト: examples/vertex-layout.md
+          - S. 頂点デバッグ: examples/vertex-debugging.md
+  - トラブルシューティング: troubleshooting.md
+  - アーキテクチャと開発:
+      - アーキテクチャ: architecture.md
+      - パブリッシュ: publishing.md

@@ -23,10 +23,49 @@ jobs:
       - run: go test ./...
       - run: go vet ./...
 
+  # ─── Documentation ───────────────────────────────────────────────────────────
+  build-docs:
+    name: Build Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install documentation dependencies
+        run: pip install -r requirements-docs.txt
+
+      - name: Build English documentation
+        run: mkdocs build --config-file mkdocs.en.yml --clean
+
+      - name: Build Japanese documentation
+        run: mkdocs build --config-file mkdocs.ja.yml --clean
+
+      - name: Create language selector
+        run: cp docs/manual_index.html manual/index.html
+
+      - name: Verify manual structure
+        run: |
+          fail() { echo "FAIL: $*"; exit 1; }
+          [[ -f manual/index.html ]]    || fail "manual/index.html missing"
+          [[ -f manual/en/index.html ]] || fail "manual/en/index.html missing"
+          [[ -f manual/ja/index.html ]] || fail "manual/ja/index.html missing"
+          echo "Manual structure:"
+          find manual -type f | sort
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-docs
+          path: manual/
+          if-no-files-found: error
+          retention-days: 14
+
   # ─── Build + Package ─────────────────────────────────────────────────────────
   build:
     name: Build (${{ matrix.goos }}-${{ matrix.goarch }})
-    needs: test
+    needs: [test, build-docs]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: true
@@ -48,6 +87,12 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
+      - name: Download documentation
+        uses: actions/download-artifact@v4
+        with:
+          name: release-docs
+          path: manual/
 
       - name: Set version
         id: ver
@@ -105,6 +150,8 @@ jobs:
             cp -r extensions/rendereye/. "${NAME}/extension/"
           fi
 
+          cp -r manual/ "${NAME}/manual/"
+
           [[ -f README.md ]] && cp README.md "${NAME}/"
           [[ -f LICENSE   ]] && cp LICENSE   "${NAME}/"
 
@@ -130,6 +177,10 @@ jobs:
             [[ -f "${NAME}/extension/extension.json" ]]   || fail "extension/extension.json missing"
             [[ -x "${NAME}/rendereye-mcp" ]]              || fail "rendereye-mcp not executable"
           fi
+
+          [[ -f "${NAME}/manual/index.html" ]]    || fail "manual/index.html missing"
+          [[ -f "${NAME}/manual/en/index.html" ]] || fail "manual/en/index.html missing"
+          [[ -f "${NAME}/manual/ja/index.html" ]] || fail "manual/ja/index.html missing"
 
           # No legacy Python MCP server files
           find "${NAME}" -name "server.py" | grep -q . && fail "legacy server.py found" || true
@@ -221,7 +272,6 @@ jobs:
       contents: write
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
-      # 【追加】Git リポジトリをチェックアウトし、リリースノート用の履歴を取得します
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0

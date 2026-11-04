@@ -162,6 +162,13 @@ The step-by-step walkthrough is in the [Quick Start](docs/en/quickstart.md).
 | Architecture | [architecture.md](docs/en/architecture.md) | [architecture.md](docs/ja/architecture.md) |
 | Release guide | [publishing.md](docs/en/publishing.md) | [publishing.md](docs/ja/publishing.md) |
 
+## Offline documentation
+
+RenderEyeMCP release packages include English and Japanese documentation built with
+MkDocs Material. After extracting the archive, open `manual/index.html` in your browser
+to access the user guide, MCP Tool reference, and graphics debugging examples. No
+internet connection, Python, or web server is required.
+
 ## Development and building
 
 RenderEyeMCP is written in Go. To build from source:

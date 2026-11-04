@@ -162,6 +162,13 @@ command = "C:\\Tools\\RenderEyeMCP\\rendereye-mcp.exe"
 | アーキテクチャ | [architecture.md](docs/en/architecture.md) | [architecture.md](docs/ja/architecture.md) |
 | リリースガイド | [publishing.md](docs/en/publishing.md) | [publishing.md](docs/ja/publishing.md) |
 
+## オフラインドキュメント
+
+RenderEyeMCPのリリースパッケージには、MkDocs Materialでビルドした英語・日本語の
+ドキュメントが含まれています。アーカイブを展開したら `manual/index.html` をブラウザで
+開くと、ユーザーガイド、MCP Toolリファレンス、グラフィックスデバッグ事例にアクセスできます。
+インターネット接続、Python、Webサーバーは一切不要です。
+
 ## 開発とビルド
 
 RenderEyeMCPはGoで書かれています。ソースからビルドするには:
