@@ -117,8 +117,48 @@ def check_pairs() -> list[str]:
     return errors
 
 
+def check_scenario_coverage() -> list[str]:
+    """Every scenario in docs/{lang}/examples/ must be referenced by its landing page,
+    its examples/README.md, and the matching mkdocs.{lang}.yml nav section.
+    English and Japanese scenario filenames must also match."""
+    errors: list[str] = []
+    langs = ["en", "ja"]
+    scenarios: dict[str, list[Path]] = {}
+    for lang in langs:
+        examples_dir = REPO_ROOT / "docs" / lang / "examples"
+        scenarios[lang] = sorted(
+            f for f in examples_dir.glob("*.md") if f.name != "README.md"
+        )
+
+    # Cross-language parity
+    en_names = {f.name for f in scenarios["en"]}
+    ja_names = {f.name for f in scenarios["ja"]}
+    for name in sorted(en_names - ja_names):
+        errors.append(f"[parity] {name}: present in en/examples/ but missing from ja/examples/")
+    for name in sorted(ja_names - en_names):
+        errors.append(f"[parity] {name}: present in ja/examples/ but missing from en/examples/")
+
+    # Per-language reference checks
+    for lang in langs:
+        index_md = REPO_ROOT / "docs" / lang / "index.md"
+        readme_md = REPO_ROOT / "docs" / lang / "examples" / "README.md"
+        mkdocs_yml = REPO_ROOT / f"mkdocs.{lang}.yml"
+        for f in scenarios[lang]:
+            name = f.name
+            stem = f.stem
+            for src, label in (
+                (index_md, f"docs/{lang}/index.md"),
+                (readme_md, f"docs/{lang}/examples/README.md"),
+                (mkdocs_yml, f"mkdocs.{lang}.yml"),
+            ):
+                text = src.read_text(encoding="utf-8")
+                if name not in text and stem not in text:
+                    errors.append(f"[coverage/{lang}] {name}: not referenced in {label}")
+    return errors
+
+
 def main() -> int:
-    errors = check_links(_markdown_files()) + check_pairs()
+    errors = check_links(_markdown_files()) + check_pairs() + check_scenario_coverage()
     for error in errors:
         print(error)
     if errors:

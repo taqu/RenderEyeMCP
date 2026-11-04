@@ -17,6 +17,9 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${REPO_ROOT}"
 
+echo "Running documentation consistency check..."
+python scripts/check_docs.py
+
 echo "Building English documentation..."
 mkdocs build --config-file mkdocs.en.yml --clean
 

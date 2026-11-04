@@ -22,18 +22,67 @@ RenderDocを日常的に使うグラフィックス/エンジンプログラマ�
 | [インストール](installation.md) | WindowsまたはLinuxへのセットアップ |
 | [設定](configuration.md) | Claude Code、Codex、他のエージェントを接続する |
 
-## よく使うデバッグシナリオ
+## グラフィックスデバッグのユースケース
 
-| シナリオ | こんなときに |
-|----------|------------|
-| [開いているCaptureを調べる](examples/active-capture.md) | 最初の確認: Capture、API、Eventの把握 |
-| [オブジェクトが表示されない](examples/missing-object.md) | DrawCallが実行されているのに何も表示されない |
-| [メッシュ・ジオメトリが消えている](examples/missing-mesh.md) | 頂点は送られているのにメッシュが表示されないか変形している |
-| [シェーダーのデバッグ](examples/shader-debugging.md) | シェーダーが間違った値を読んでいるか、予期しない出力を生成している |
-| [GPUパフォーマンスのボトルネック](examples/gpu-bottleneck.md) | GPUに時間がかかっている; どこで時間を使っているか特定する |
-| [Pixel Historyの調査](examples/pixel-history.md) | Pixelの色がおかしい; 書き込み履歴を追う |
+各シナリオは実際の描画の問題から出発しています。プロンプトのテンプレートとして使うか、
+自分の調査を組み立てる際の参考にしてください。すべてのシナリオの一覧と使いどころは
+[シナリオ一覧](examples/README.md)を参照してください。
 
-すべてのシナリオは[デバッグシナリオ一覧](examples/README.md)を参照してください。
+### Captureとイベントの確認
+
+- [開いているCaptureを調べる](examples/active-capture.md)
+  — エージェントがRenderDocで開いているCaptureを読み取れることを確認し、API・Frame・選択中のEventを把握する。
+
+### 表示されない・おかしいレンダリング
+
+- [オブジェクトが表示されない](examples/missing-object.md)
+  — DrawCallが実行されているのに画面に何も表示されない。
+- [メッシュが表示されない](examples/missing-mesh.md)
+  — 頂点は送られているのにメッシュが見えないか変形している; 頂点データと変換後の位置を確認する。
+- [Textureやマテリアルの値がおかしい](examples/shader-resources.md)
+  — マテリアルに違うTextureやデフォルトのTexture、想定外の定数値が使われている。
+- [Render Targetが黒い・色がおかしい](examples/render-target.md)
+  — Render Targetが真っ黒、飽和している、または想定外の色になっている。
+
+### Render Target・Pixel・深度
+
+- [Pixelの色が間違っている](examples/pixel-history.md)
+  — 特定のPixelの書き込み履歴を追って、最後に変更したDrawCallと原因を特定する。
+- [深度テストの問題](examples/depth-debugging.md)
+  — 手前にあるはずのオブジェクトが奥に隠れたり、ちらついたりしている(Z-fighting)。
+- [深度テスト棄却](examples/depth-rejection.md)
+  — Pixel Historyではフラグメントが存在しているが、深度テストで常に棄却されている。
+
+### Shaderのデバッグ
+
+- [ピクセルシェーダーのデバッグ](examples/shader-debugging.md)
+  — 問題のPixelに触れるフラグメントが1つだけ; Pixel Shader内部のバグを追う。
+- [頂点シェーダーのデバッグ](examples/vertex-debugging.md)
+  — 変換後にメッシュの頂点が間違った位置に現れる; 頂点シェーダーをステップ実行する。
+- [Compute Shaderの出力がおかしい](examples/compute-dispatch.md)
+  — Dispatchが想定外の結果(0、ゴミ値、途中までしか埋まっていないBuffer)を書き込む。
+- [Compute ShaderのNaN](examples/compute-debugging.md)
+  — Compute ShaderがNaNまたはInfを出力し、下流のPixelを破壊している。
+
+### ジオメトリと頂点の検査
+
+- [頂点フォーマットの不一致](examples/vertex-layout.md)
+  — ジオメトリが歪んで表示される; 頂点入力レイアウトのミスマッチを疑う。
+- [頂点変換の調査](examples/post-vs-inspection.md)
+  — オブジェクトが間違った位置に表示されるか予期しないクリッピングが起きる; VS前後の位置を比較する。
+- [ジオメトリとパフォーマンス](examples/geometry-performance.md)
+  — 重いDrawCallが特定できた; そのコストが過剰なジオメトリに起因するか調べる。
+
+### GPUパフォーマンス分析
+
+- [最もコストの高いDrawCallを特定する](examples/expensive-drawcalls.md)
+  — GPU時間でDrawCallを順位付けし、最も重いDrawCallのパイプラインを調べる。
+- [Render PassごとのGPUコストを比較する](examples/render-pass-performance.md)
+  — Shadow・G-buffer・Lighting・PostProcessのコストを比較してボトルネックのPassを探す。
+- [最もコストの高いCompute Dispatchを特定する](examples/compute-performance.md)
+  — GPU時間でCompute Dispatchを順位付けし、最上位のShaderを調べる。
+- [GPUボトルネックを診断する](examples/gpu-bottleneck.md)
+  — 1つのDrawCallのパイプライン統計・Shader・Render Target・リソースBindingを収集して根拠に基づいた仮説を立てる。
 
 ## リファレンス
 

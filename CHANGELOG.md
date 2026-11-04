@@ -5,7 +5,7 @@ All notable changes to RenderEyeMCP are documented in this file.
 ## [1.0.0] — Unreleased (Phase 12: release preparation)
 
 No tag or release has been published yet; earlier 1.0.0 entries below describe work
-merged before Phase 12. Draft notes: [docs/release_notes_v1.0.md](docs/release_notes_v1.0.md).
+merged before Phase 12.
 
 ### Added
 

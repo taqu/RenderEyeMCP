@@ -79,7 +79,7 @@ codex mcp list
 ## その他のMCPクライアント
 
 stdioサーバーを上記のコマンドで起動できるMCPクライアントであれば動作します。
-[examples](../examples/)ディレクトリにCursor、VS Code（GitHub Copilot）、
+[examples](../../examples/)ディレクトリにCursor、VS Code（GitHub Copilot）、
 Gemini向けの設定スニペットがあります。
 
 ## 接続の確認

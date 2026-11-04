@@ -75,7 +75,7 @@ codex mcp list
 ## Other MCP clients
 
 Any MCP client that can start a stdio server with the command above should work.
-The [examples](../examples/) directory contains configuration snippets for Cursor,
+The [examples](../../examples/) directory contains configuration snippets for Cursor,
 VS Code (GitHub Copilot), and Gemini.
 
 ## Verify the connection
