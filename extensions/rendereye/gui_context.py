@@ -133,6 +133,8 @@ def _action_to_dict(action, depth=0, include_children=False, sdf=None):
 _MAX_BUFFER_READ_BYTES = 16384  # 16 KiB
 # Maximum decoded elements per structured decode
 _MAX_DECODE_ELEMENTS = 100
+# Maximum nodes returned by the event_tree operation
+_MAX_EVENT_TREE_NODES = 50000
 
 # ResourceType int values (mirrors renderdoc.ResourceType)
 _RESTYPE_TEXTURE = 4
@@ -773,6 +775,8 @@ class GUIContext(object):
                 result = self._inspect_selected_event(ctx)
             elif operation == "list_events":
                 result = self._inspect_list_events(ctx, params)
+            elif operation == "event_tree":
+                result = self._inspect_event_tree(ctx, params)
             elif operation == "get_event":
                 result = self._inspect_get_event(ctx, params)
             elif operation == "pipeline_state":
@@ -836,7 +840,7 @@ class GUIContext(object):
                     "error": "unsupported_operation",
                     "operation": operation,
                     "supported": [
-                        "capture_info", "selected_event", "list_events", "get_event",
+                        "capture_info", "selected_event", "list_events", "event_tree", "get_event",
                         "pipeline_state", "list_resources", "get_resource_info",
                         "get_texture_info", "get_buffer_info", "read_buffer_data",
                         "list_shaders", "get_shader_info", "get_shader_reflection",
@@ -1085,6 +1089,58 @@ class GUIContext(object):
             "offset": offset,
             "has_more": (offset + limit) < counter[0],
         }
+
+    def _inspect_event_tree(self, ctx, params):
+        """Return the full action hierarchy with compact nodes.
+
+        Used by the service for get_render_pass_performance, which must group
+        draw/dispatch events under their debug-marker regions.  Nodes carry only
+        event_id, name, action_type and children; the walk stops after
+        max_nodes nodes and reports truncated=True.
+        """
+        max_nodes = min(max(int(params.get("max_nodes", _MAX_EVENT_TREE_NODES)), 1), _MAX_EVENT_TREE_NODES)
+        try:
+            root_actions = ctx.CurRootActions()
+        except Exception as exc:
+            return {"error": "unsupported", "message": "CurRootActions not available: " + str(exc)}
+        if root_actions is None:
+            return {"events": [], "total_nodes": 0, "truncated": False}
+
+        count = [0]
+        truncated = [False]
+
+        def walk(actions):
+            nodes = []
+            for action in actions:
+                if count[0] >= max_nodes:
+                    truncated[0] = True
+                    break
+                count[0] += 1
+                try:
+                    flags_int = int(action.flags)
+                except Exception:
+                    flags_int = 0
+                try:
+                    name = str(action.customName) if action.customName else ""
+                except Exception:
+                    name = ""
+                if not name:
+                    name = "Event %d" % int(action.eventId)
+                node = {
+                    "event_id": int(action.eventId),
+                    "name": name,
+                    "action_type": _action_type(flags_int),
+                }
+                try:
+                    kids = action.children
+                except Exception:
+                    kids = None
+                node["children"] = walk(kids) if kids else []
+                nodes.append(node)
+            return nodes
+
+        events = walk(root_actions)
+        return {"events": events, "total_nodes": count[0], "truncated": truncated[0]}
 
     def _inspect_get_event(self, ctx, params):
         event_id = int(params.get("event_id", 0))

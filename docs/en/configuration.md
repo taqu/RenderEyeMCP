@@ -125,6 +125,13 @@ Point `RENDEREYE_ENV_FILE` to a `.env` file if you want to set these persistentl
 | `RENDEREYE_IPC_PORT` | `37020` | Service TCP port. |
 | `RENDEREYE_LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error`. |
 | `RENDEREYE_ENV_FILE` | (none) | Path to a `.env` file loaded at startup. |
+| `RENDEREYE_RENDERDOC_EXE` | (auto-detect) | `qrenderdoc` executable used by `capture_open`. |
+| `RENDEREYE_STORAGE_PATH` | `%APPDATA%\rendereye_mcp\captures.db` | SQLite database for capture and session records. |
+| `RENDEREYE_CAPTURE_ENABLED` | `true` | Set `false` to disable the capture-file registry. |
+| `RENDEREYE_CAPTURE_DIRS` | (none) | Folders watched for `.rdc` files, separated by `;` on Windows (`:` elsewhere). |
+| `RENDEREYE_CAPTURE_RECURSIVE` | `false` | Also watch subfolders of `RENDEREYE_CAPTURE_DIRS`. |
+| `RENDEREYE_CAPTURE_SCAN_INTERVAL` | `10` | Seconds between full rescans (the folder watcher reports changes immediately). |
+| `RENDEREYE_CAPTURE_STABILITY_SECONDS` | `2` | A capture must stay unchanged this long before it is `ready`. |
 
 **Changing the port:** the RenderDoc extension reads `RENDEREYE_IPC_PORT` from RenderDoc's
 own environment. If you change the port, set it as a user environment variable before

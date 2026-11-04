@@ -49,7 +49,7 @@ The values in this page are examples, not IDs that exist in your capture.
 | `error: no_capture_loaded` / `capture_loading` | Connected, but no capture is ready yet |
 | `error: resource_not_found` | The resource ID does not exist in the loaded capture |
 | `error: shader_not_bound` | No shader at that stage for the selected event |
-| `error: timeout` | The extension did not answer within 30 s (RenderDoc busy or blocked by a dialog) |
+| `error: timeout` | The extension did not answer in time (RenderDoc busy or blocked by a dialog). Limits: 30 s for inspection tools; 120 s per replay for `get_texture_image`, `get_texture_statistics`, `get_post_vs_geometry`, `get_pixel_history`, the `debug_*_shader` tools and each `collect_gpu_counters` run |
 | `error: extension_error` | RenderDoc raised an error; `message` has the details |
 | `error: result_too_large` | The answer exceeded the 16 MiB IPC message limit; request less data |
 
@@ -143,6 +143,8 @@ one message; very large textures may need a smaller mip.
 These tools predate the active-GUI workflow. They manage `.rdc` files on disk and
 RenderDoc windows that RenderEyeMCP launches itself. They are covered by automated tests
 but were **not validated live** for this release; window focus/close use Windows APIs.
+Records are stored in SQLite (`RENDEREYE_STORAGE_PATH`), so capture and session IDs
+survive service restarts.
 
 | Tool | Purpose | GUI state |
 |------|---------|-----------|
@@ -163,7 +165,7 @@ Windows opened by you (or by an engine) are never closed or replaced by these to
 
 | Tool | Returns |
 |------|---------|
-| `server_status` | Server name and version, OS, Python, whether RenderDoc was detected, IPC listener state, extension connection and session counts |
+| `server_status` | Server name and version, OS, Go version, whether RenderDoc was detected, IPC listener state, extension connection and session counts |
 
 ## Examples
 

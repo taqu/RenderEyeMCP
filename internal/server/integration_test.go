@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -430,5 +432,151 @@ func TestMalformedJSON(t *testing.T) {
 	recvMsg(t, r, &errMsg)
 	if errMsg.Code != "parse_error" {
 		t.Errorf("expected parse_error, got %q", errMsg.Code)
+	}
+}
+
+// TestCollectGPUCountersEndToEnd drives collect_gpu_counters through the real
+// TCP service: bridge A collects (the extension sees fetch_gpu_counters), and
+// bridge B — a second agent — analyses the stored measurement without any
+// further GPU work.
+func TestCollectGPUCountersEndToEnd(t *testing.T) {
+	addr, _, authInst := startTestServer(t)
+
+	extConn, extReader := dialConn(t, addr)
+	sendJSON(t, extConn, ipc.HelloMessage{RequestID: "h", InstanceID: "inst-gpu", ProcessID: 1, ExtensionVersion: "1.0", Type: "hello", ProtocolVersion: 1})
+	var hAck ipc.HelloAckMessage
+	recvMsg(t, extReader, &hAck)
+	sendJSON(t, extConn, ipc.RegisterInstanceMessage{RequestID: "r", InstanceID: "inst-gpu", ProcessID: 1, ExtensionVersion: "1.0", AuthToken: authInst.token, Type: "register_instance", ProtocolVersion: 1})
+	var rAck ipc.RegisterAckMessage
+	recvMsg(t, extReader, &rAck)
+
+	bridge := func(id string) (net.Conn, *bufio.Reader) {
+		c, rd := dialConn(t, addr)
+		sendJSON(t, c, ipc.BridgeRegisterMessage{RequestID: id, BridgeID: id, ProcessID: 2, AuthToken: authInst.token, Type: "bridge_register", ProtocolVersion: 1})
+		var ack ipc.BridgeRegisterAckMessage
+		recvMsg(t, rd, &ack)
+		return c, rd
+	}
+	connA, readerA := bridge("agent-A")
+	connB, readerB := bridge("agent-B")
+
+	sendJSON(t, connA, ipc.ToolCallMessage{RequestID: "collect-1", ToolName: "collect_gpu_counters",
+		Arguments: map[string]interface{}{"counter_ids": []interface{}{1}}, Type: "tool_call"})
+
+	extConn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	var req ipc.InspectCaptureRequestMessage
+	recvMsg(t, extReader, &req)
+	if req.Operation != "fetch_gpu_counters" {
+		t.Fatalf("extension got operation %q, want fetch_gpu_counters", req.Operation)
+	}
+	if ids, _ := req.Params["counter_ids"].([]interface{}); len(ids) != 1 {
+		t.Fatalf("counter_ids not forwarded: %v", req.Params)
+	}
+	sendJSON(t, extConn, ipc.InspectCaptureResultMessage{
+		RequestID: req.RequestID, Operation: req.Operation, Type: "inspect_capture_result",
+		Result: map[string]interface{}{
+			"_capture_path":        "/captures/frame.rdc",
+			"results":              []interface{}{map[string]interface{}{"event_id": 5, "counter_id": 1, "value": 0.25}},
+			"counter_descriptions": []interface{}{map[string]interface{}{"counter_id": 1, "name": "GPU Duration", "unit": "Seconds"}},
+			"counters_fetched":     []interface{}{1},
+			"counters_invalid":     []interface{}{},
+		},
+	})
+
+	connA.SetReadDeadline(time.Now().Add(3 * time.Second))
+	var collected ipc.ToolResultMessage
+	recvMsg(t, readerA, &collected)
+	m, _ := collected.Result.(map[string]interface{})
+	if collected.Error != "" || m["status"] != "completed" {
+		t.Fatalf("collect_gpu_counters failed: error=%q result=%v", collected.Error, collected.Result)
+	}
+	if m["error"] == "not_implemented_in_go_service" {
+		t.Fatal("collect_gpu_counters still unimplemented")
+	}
+	mid, _ := m["measurement_id"].(string)
+
+	sendJSON(t, connB, ipc.ToolCallMessage{RequestID: "timings-1", ToolName: "get_gpu_timings",
+		Arguments: map[string]interface{}{"measurement_id": mid}, Type: "tool_call"})
+	connB.SetReadDeadline(time.Now().Add(3 * time.Second))
+	var timings ipc.ToolResultMessage
+	recvMsg(t, readerB, &timings)
+	tm, _ := timings.Result.(map[string]interface{})
+	if tm["total"] != 1.0 || tm["counter_name"] != "GPU Duration" {
+		t.Errorf("agent B could not analyse agent A's measurement: %v", timings.Result)
+	}
+}
+
+// TestServiceWiring_registryAndSessionTools starts the production Server (New)
+// with a temporary database and capture folder and checks that registry and
+// session tools are served by the real subsystems.
+func TestServiceWiring_registryAndSessionTools(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TEMP", tmp) // keep the ready/token files away from a real service
+	t.Setenv("TMP", tmp)
+	capDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(capDir, "frame.rdc"), []byte("RDOC-frame"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	capCfg := config.DefaultCaptureConfig()
+	capCfg.StabilityDuration = 20 * time.Millisecond
+	capCfg.Directories = []config.CaptureDirectory{{Path: capDir}}
+	cfg := &config.Config{IPCHost: "127.0.0.1", IPCPort: 0, StoragePath: filepath.Join(tmp, "db", "captures.db"), Capture: capCfg}
+
+	svc, _ := New(cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan error, 1)
+	go func() { started <- svc.Start(ctx) }()
+	defer func() {
+		cancel()
+		<-started
+		svc.Stop()
+	}()
+	var addr string
+	deadline := time.Now().Add(3 * time.Second)
+	for addr == "" {
+		if l := svc.listenerAddr(); l != "" {
+			addr = l
+		} else if time.Now().After(deadline) {
+			t.Fatal("service did not start listening")
+		} else {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	conn, reader := dialConn(t, addr)
+	sendJSON(t, conn, ipc.BridgeRegisterMessage{RequestID: "b", BridgeID: "b", ProcessID: 1, AuthToken: svc.auth.token, Type: "bridge_register", ProtocolVersion: 1})
+	var ack ipc.BridgeRegisterAckMessage
+	recvMsg(t, reader, &ack)
+
+	call := func(id, tool string, args map[string]interface{}) map[string]interface{} {
+		sendJSON(t, conn, ipc.ToolCallMessage{RequestID: id, ToolName: tool, Arguments: args, Type: "tool_call"})
+		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		var res ipc.ToolResultMessage
+		recvMsg(t, reader, &res)
+		m, _ := res.Result.(map[string]interface{})
+		return m
+	}
+
+	var latest map[string]interface{}
+	for i := 0; i < 100; i++ {
+		if latest = call(fmt.Sprintf("l%d", i), "capture_latest", map[string]interface{}{}); latest["status"] == "ready" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if latest["filename"] != "frame.rdc" || latest["capture_id"] == nil {
+		t.Fatalf("capture_latest via real registry: %v", latest)
+	}
+	if st := call("s", "capture_registry_status", map[string]interface{}{}); st["total_captures"] != 1.0 || st["enabled"] != true {
+		t.Errorf("capture_registry_status: %v", st)
+	}
+	if list := call("sl", "session_list", map[string]interface{}{}); list["total"] != 0.0 {
+		t.Errorf("session_list: %v", list)
+	}
+	if op := call("og", "operation_get", map[string]interface{}{"operation_id": "op-000123"}); op["status"] != "failed" {
+		t.Errorf("operation_get unknown id: %v", op)
+	}
+	if ss := call("ss", "server_status", map[string]interface{}{}); ss["active_sessions"] != 0.0 {
+		t.Errorf("server_status: %v", ss)
 	}
 }

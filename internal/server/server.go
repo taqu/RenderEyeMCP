@@ -4,6 +4,7 @@ package server
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"net"
@@ -11,7 +12,12 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/taqu/rendereye-mcp/internal/captures"
 	"github.com/taqu/rendereye-mcp/internal/config"
+	"github.com/taqu/rendereye-mcp/internal/instances"
+	"github.com/taqu/rendereye-mcp/internal/operations"
+	"github.com/taqu/rendereye-mcp/internal/sessions"
+	"github.com/taqu/rendereye-mcp/internal/store"
 )
 
 // maxConnections is the maximum number of concurrent client connections.
@@ -23,6 +29,11 @@ type Server struct {
 	router *Router
 	auth   *Auth
 
+	db       *sql.DB
+	registry *captures.Registry
+	sessions *sessions.Manager
+
+	lnMu     sync.Mutex
 	listener net.Listener
 	connWG   sync.WaitGroup
 	// connCount tracks active connections for limit enforcement.
@@ -30,15 +41,30 @@ type Server struct {
 }
 
 // New creates a Server with a freshly generated auth token and service ID.
+//
+// It opens the capture/session database and builds the capture registry,
+// instance manager and session manager.  If the database cannot be opened the
+// service still starts; registry and session tools then report themselves
+// unavailable instead of failing every call.
 func New(cfg *config.Config) (*Server, string) {
 	auth := NewAuth()
 	serviceInstanceID := generateInstanceID()
-	router := NewRouter(serviceInstanceID, auth)
-	return &Server{
-		cfg:    cfg,
-		router: router,
-		auth:   auth,
-	}, serviceInstanceID
+	s := &Server{cfg: cfg, auth: auth}
+
+	svc := &Services{RenderdocExe: cfg.RenderdocExe, Instances: instances.NewManager()}
+	if db, err := store.Open(cfg.StoragePath); err != nil {
+		slog.Error("capture/session storage unavailable; registry and session tools disabled",
+			"path", cfg.StoragePath, "err", err)
+	} else {
+		s.db = db
+		s.registry = captures.NewRegistry(cfg.Capture, captures.NewStorage(db))
+		s.sessions = sessions.NewManager(sessions.NewStorage(db), svc.Instances, s.registry,
+			operations.NewTracker(), cfg.RenderdocExe)
+		svc.Captures = s.registry
+		svc.Sessions = s.sessions
+	}
+	s.router = NewRouterWithServices(serviceInstanceID, auth, svc)
+	return s, serviceInstanceID
 }
 
 // Start binds the TCP listener, writes the ready file, and begins accepting
@@ -49,8 +75,18 @@ func (s *Server) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", addr, err)
 	}
+	s.lnMu.Lock()
 	s.listener = ln
+	s.lnMu.Unlock()
 	slog.Info("IPC listener ready", "addr", addr)
+
+	if s.registry != nil {
+		s.registry.Start()
+	}
+	if s.sessions != nil {
+		rec, recov, lost := s.sessions.Reconcile()
+		slog.Info("sessions reconciled", "reconciled", rec, "recovered", recov, "lost", lost)
+	}
 
 	WriteReadyFile(s.router.serviceInstanceID, s.cfg.IPCHost, s.cfg.IPCPort, os.Getpid())
 
@@ -69,9 +105,25 @@ func (s *Server) Stop() {
 	if s.listener != nil {
 		s.listener.Close()
 	}
-	s.connWG.Wait()
 	s.router.Close()
+	s.connWG.Wait()
+	if s.registry != nil {
+		s.registry.Stop()
+	}
+	if s.db != nil {
+		s.db.Close()
+	}
 	slog.Info("server stopped")
+}
+
+// listenerAddr returns the bound address once Start is listening ("" before).
+func (s *Server) listenerAddr() string {
+	s.lnMu.Lock()
+	defer s.lnMu.Unlock()
+	if s.listener == nil {
+		return ""
+	}
+	return s.listener.Addr().String()
 }
 
 // acceptLoop accepts new TCP connections and spawns a handler goroutine for each.
@@ -129,4 +181,3 @@ func newUUID() string {
 func currentPID() int {
 	return os.Getpid()
 }
-

@@ -51,7 +51,7 @@ EIDです。どちらも今読み込まれているCaptureの中でのみ意味�
 | `error: no_capture_loaded` / `capture_loading` | 接続済みだが、Captureの準備ができていない |
 | `error: resource_not_found` | 読み込み中のCaptureにそのリソースIDがない |
 | `error: shader_not_bound` | 選択中のEventにそのステージのShaderがない |
-| `error: timeout` | 拡張機能が30秒以内に応答しなかった(RenderDocが処理中、またはダイアログで止まっている) |
+| `error: timeout` | 拡張機能が制限時間内に応答しなかった(RenderDocが処理中、またはダイアログで止まっている)。制限時間は調査Toolが30秒。`get_texture_image`、`get_texture_statistics`、`get_post_vs_geometry`、`get_pixel_history`、`debug_*_shader`、`collect_gpu_counters`の各実行はリプレイ1回につき120秒 |
 | `error: extension_error` | RenderDocがエラーを返した。詳細は`message` |
 | `error: result_too_large` | 応答が16 MiBのIPCメッセージ上限を超えた。要求するデータ量を減らす |
 
@@ -146,6 +146,8 @@ Textureでは小さいMipを指定する必要があることがあります。
 ディスク上の`.rdc`ファイルと、RenderEyeMCP自身が起動したRenderDocウィンドウを扱います。
 自動テストはありますが、今回のリリースでは**実機検証をしていません**。ウィンドウの
 フォーカス/クローズにはWindows APIを使います。
+記録はSQLite(`RENDEREYE_STORAGE_PATH`)に保存されるため、CaptureとセッションのIDは
+サービスを再起動しても変わりません。
 
 | Tool | 用途 | GUIの状態 |
 |------|------|-----------|
@@ -167,7 +169,7 @@ Textureでは小さいMipを指定する必要があることがあります。
 
 | Tool | 戻り値 |
 |------|--------|
-| `server_status` | サーバー名とバージョン、OS、Python、RenderDocを検出できたか、IPCリスナーの状態、拡張機能の接続数とセッション数 |
+| `server_status` | サーバー名とバージョン、OS、Goのバージョン、RenderDocを検出できたか、IPCリスナーの状態、拡張機能の接続数とセッション数 |
 
 ## 例
 

@@ -129,6 +129,13 @@ taskkill /F /IM rendereye-mcp.exe
 | `RENDEREYE_IPC_PORT` | `37020` | サービスのTCPポート番号。 |
 | `RENDEREYE_LOG_LEVEL` | `info` | ログレベル: `debug`、`info`、`warn`、`error`。 |
 | `RENDEREYE_ENV_FILE` | (なし) | 起動時に読み込む `.env` ファイルのパス。 |
+| `RENDEREYE_RENDERDOC_EXE` | (自動検出) | `capture_open` が使う `qrenderdoc` 実行ファイル。 |
+| `RENDEREYE_STORAGE_PATH` | `%APPDATA%\rendereye_mcp\captures.db` | CaptureとセッションのレコードをSQLiteで保存するファイル。 |
+| `RENDEREYE_CAPTURE_ENABLED` | `true` | `false` でCaptureファイルのレジストリを無効にします。 |
+| `RENDEREYE_CAPTURE_DIRS` | (なし) | `.rdc` ファイルを監視するフォルダー。Windowsでは `;`、それ以外では `:` で区切ります。 |
+| `RENDEREYE_CAPTURE_RECURSIVE` | `false` | `RENDEREYE_CAPTURE_DIRS` のサブフォルダーも監視します。 |
+| `RENDEREYE_CAPTURE_SCAN_INTERVAL` | `10` | 全体を再スキャンする間隔(秒)。変更はフォルダー監視ですぐに検出されます。 |
+| `RENDEREYE_CAPTURE_STABILITY_SECONDS` | `2` | この秒数だけ変化しなかったCaptureを `ready` にします。 |
 
 **ポートを変更する場合:** RenderDoc拡張機能は `RENDEREYE_IPC_PORT` をRenderDoc自身の
 環境変数から読み取ります。ポートを変更した場合は、ユーザー環境変数としても設定してから

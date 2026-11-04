@@ -83,8 +83,16 @@ bridge --tool_call--> service --resolve instance_id--> connection
 ```
 
 Session resolution: an explicit `instance_id`, otherwise the only connected session,
-otherwise the only one with a capture loaded; else `ambiguous`. Each request has a 30 s
-timeout.
+otherwise the only one with a capture loaded; else `ambiguous`. Each request has its own
+timeout: 30 s for inspection, 120 s per replay-heavy operation, and up to 5 × 120 s for
+`collect_gpu_counters`. Cancelling a call (or disconnecting the agent) stops the service
+from sending further requests for it; an operation already running on RenderDoc's GUI
+thread finishes and its result is discarded.
+
+Every tool's route (handled in the service, or forwarded as one `inspect_capture`
+operation) and timeout is declared once in `internal/toolspec`; tests check that the
+registered MCP tools, that catalog, the service handlers and the extension's operations
+all agree.
 
 ## State and ownership
 

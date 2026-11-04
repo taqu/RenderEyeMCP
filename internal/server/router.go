@@ -1,86 +1,36 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
-	"runtime"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/taqu/rendereye-mcp/internal/config"
 	"github.com/taqu/rendereye-mcp/internal/ipc"
+	"github.com/taqu/rendereye-mcp/internal/toolspec"
 )
 
 // sendQueueSize is the capacity of each connection's outbound message channel.
 const sendQueueSize = 64
 
-// toolCallTimeout is how long we wait for an inspect_capture_result before
-// returning an error tool_result to the bridge.
-const toolCallTimeout = 30 * time.Second
-
-// toolToOperation maps MCP tool names to the operation string sent in
-// inspect_capture messages.  Only entries that differ from the tool name
-// are listed; all others use the tool name directly.
-var toolToOperation = map[string]string{
-	// Phase 8
-	"get_current_capture_info": "capture_info",
-	"list_capture_events":      "list_events",
-	"get_capture_event":        "get_event",
-	"get_selected_event":       "selected_event",
-	"get_pipeline_state":       "pipeline_state",
-	// Phase 14
-	"get_draw_geometry_info":  "draw_geometry_info",
-	"get_vertex_input_layout": "vertex_input_layout",
-	"get_mesh_indices":        "mesh_indices",
-	"get_mesh_vertices":       "mesh_vertices",
-	"get_post_vs_geometry":    "post_vs_geometry",
-	"get_mesh_statistics":     "mesh_statistics",
-	// Phase 15
-	"get_pixel_history": "pixel_history",
-}
-
-// inspectionTools is the set of tool names that are forwarded to the extension
-// via an inspect_capture message.  All other tool names are either handled
-// internally or rejected.
-var inspectionTools = map[string]bool{
-	// Phase 8
-	"get_current_capture_info": true,
-	"list_capture_events":      true,
-	"get_capture_event":        true,
-	"get_selected_event":       true,
-	"get_pipeline_state":       true,
-	// Phase 9
-	"list_resources":    true,
-	"get_resource_info": true,
-	"get_texture_info":  true,
-	"get_buffer_info":   true,
-	"read_buffer_data":  true,
-	// Phase 10
-	"list_shaders":           true,
-	"get_shader_info":        true,
-	"get_shader_reflection":  true,
-	"get_shader_bindings":    true,
-	"get_shader_disassembly": true,
-	"get_shader_debug_info":  true,
-	// Phase 11
-	"get_render_targets":     true,
-	"get_texture_image":      true,
-	"get_pixel_value":        true,
-	"get_texture_statistics": true,
-	// Phase 13
-	"list_gpu_counters": true,
-	// Phase 14
-	"get_draw_geometry_info":  true,
-	"get_vertex_input_layout": true,
-	"get_mesh_indices":        true,
-	"get_mesh_vertices":       true,
-	"get_post_vs_geometry":    true,
-	"get_mesh_statistics":     true,
-	// Phase 15
-	"get_pixel_history": true,
-}
+// Failure codes reported when an extension request does not complete.  They
+// are returned in both ToolResultMessage.error and result.error, as before.
+const (
+	failTimeout        = "timeout"
+	failDisconnected   = "extension_disconnected"
+	failMarshal        = "internal_marshal_error"
+	failQueueFull      = "extension_queue_full"
+	failCancelled      = "cancelled"
+	failInvalidReply   = "invalid_extension_result"
+	errUnknownTool     = "unknown_tool"
+	errInternalHandler = "internal_error"
+)
 
 // ---------------------------------------------------------------------------
 // Connection state types
@@ -137,14 +87,23 @@ type bridgeState struct {
 	send     chan []byte
 }
 
-// pendingCall records a tool_call forwarded to an extension, awaiting
-// the matching inspect_capture_result.
+// extReply is the outcome of one request sent to an extension.
+type extReply struct {
+	// result and errStr are the extension's inspect_capture_result fields.
+	result interface{}
+	errStr string
+	// gui is set for gui_command_result replies.
+	gui *ipc.GuiCommandResultMessage
+	// failure is non-empty when no reply was received (timeout, disconnect…).
+	failure string
+}
+
+// pendingCall is a request sent to an extension awaiting its reply.
 type pendingCall struct {
-	requestID    string
-	bridgeConnID string
-	toolName     string
-	extConnID    string
-	createdAt    time.Time
+	requestID string
+	extConnID string
+	operation string
+	ch        chan extReply // buffered (1); receives exactly one reply
 }
 
 // ---------------------------------------------------------------------------
@@ -153,37 +112,75 @@ type pendingCall struct {
 
 // Router is the central coordinator for all client connections and message
 // routing.  It is safe for concurrent use.
+//
+// Every tool call runs in its own goroutine (see connHandler.handleToolCall)
+// with a context bounded by the tool's toolspec timeout.  The context is
+// cancelled when the originating bridge disconnects or the router closes, so
+// composite tools stop issuing further extension requests.
 type Router struct {
 	serviceInstanceID string
 	auth              *Auth
 	mu                sync.Mutex
 	extensions        map[string]*extState    // connID → ext
 	bridges           map[string]*bridgeState // connID → bridge
-	pending           map[string]*pendingCall // requestID → pending tool call
+	pending           map[string]*pendingCall // extension requestID → pending request
+	inflight          map[string]map[string]context.CancelFunc
 
-	// done is closed by Close() to stop background goroutines.
-	done chan struct{}
+	svc      *Services
+	handlers map[string]serviceHandler
+	measure  *measurementStore
+	debug    *debugStore
+
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	// timeoutOverride, when positive, replaces every toolspec timeout (tests).
+	timeoutOverride time.Duration
 }
 
-// NewRouter creates a Router and starts its background timeout goroutine.
-// Call Close() to stop the goroutine when the Router is no longer needed.
+// timeout returns d, or the test override when set.
+func (r *Router) timeout(d time.Duration) time.Duration {
+	if r.timeoutOverride > 0 {
+		return r.timeoutOverride
+	}
+	return d
+}
+
+// NewRouter creates a Router without registry/session subsystems (they report
+// themselves as unavailable).  Use NewRouterWithServices in production.
 func NewRouter(serviceInstanceID string, auth *Auth) *Router {
+	return NewRouterWithServices(serviceInstanceID, auth, nil)
+}
+
+// NewRouterWithServices creates a Router wired to the given subsystems.
+func NewRouterWithServices(serviceInstanceID string, auth *Auth, svc *Services) *Router {
+	if svc == nil {
+		svc = &Services{}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
 	r := &Router{
 		serviceInstanceID: serviceInstanceID,
 		auth:              auth,
 		extensions:        make(map[string]*extState),
 		bridges:           make(map[string]*bridgeState),
 		pending:           make(map[string]*pendingCall),
-		done:              make(chan struct{}),
+		inflight:          make(map[string]map[string]context.CancelFunc),
+		svc:               svc,
+		measure:           newMeasurementStore(maxMeasurements),
+		debug:             newDebugStore(maxDebugRecords),
+		ctx:               ctx,
+		cancel:            cancel,
 	}
-	go r.timeoutLoop()
+	r.handlers = r.serviceHandlers()
+	if svc.Sessions != nil {
+		svc.Sessions.SetGateway(r)
+	}
 	return r
 }
 
-// Close stops the Router's background goroutines.  It must be called exactly
-// once when the Router is no longer needed to prevent goroutine leaks.
+// Close cancels every in-flight tool call.  It is safe to call more than once.
 func (r *Router) Close() {
-	close(r.done)
+	r.cancel()
 }
 
 // ---------------------------------------------------------------------------
@@ -193,7 +190,6 @@ func (r *Router) Close() {
 // RegisterExtension stores an authenticated extension connection in the router.
 func (r *Router) RegisterExtension(connID, instanceID string, processID int, extVersion, rdocVersion string, sendCh chan []byte) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.extensions[connID] = &extState{
 		connID:      connID,
 		instanceID:  instanceID,
@@ -203,50 +199,74 @@ func (r *Router) RegisterExtension(connID, instanceID string, processID int, ext
 		connected:   true,
 		send:        sendCh,
 	}
+	r.mu.Unlock()
+	if r.svc.Sessions != nil {
+		r.svc.Sessions.OnExtensionConnected(processID)
+	}
 	slog.Info("extension registered", "conn_id", connID, "instance_id", instanceID, "pid", processID)
 }
 
-// UpdateGuiState updates cached capture state from a gui_state_changed or gui_state_response.
+// UpdateGuiState updates cached capture state from a gui_state_changed or
+// gui_state_response.  When the loaded capture changes, stored GPU
+// measurements and shader debug traces of the previous capture for that
+// instance are marked invalidated.
 func (r *Router) UpdateGuiState(connID string, revision int, capLoaded bool, capPath *string, capState string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	ext, ok := r.extensions[connID]
-	if !ok {
-		return
+	if !ok || revision <= ext.revision {
+		r.mu.Unlock()
+		return // unknown or stale
 	}
-	if revision <= ext.revision {
-		return // stale
+	oldPath := ""
+	if ext.capLoaded && ext.capPath != nil {
+		oldPath = *ext.capPath
 	}
 	ext.revision = revision
 	ext.capLoaded = capLoaded
 	ext.capPath = capPath
 	ext.capState = capState
+	instanceID, pid := ext.instanceID, ext.processID
+	r.mu.Unlock()
+
+	newPath := ""
+	if capLoaded && capPath != nil {
+		newPath = *capPath
+	}
+	if oldPath != "" && oldPath != newPath {
+		m := r.measure.invalidate(instanceID, oldPath)
+		d := r.debug.invalidate(instanceID, oldPath)
+		if m+d > 0 {
+			slog.Info("capture changed; invalidated stored results", "instance_id", instanceID, "measurements", m, "debug_traces", d)
+		}
+	}
+	if r.svc.Sessions != nil {
+		r.svc.Sessions.OnGuiState(pid, capLoaded, capPath)
+	}
 }
 
-// DisconnectExtension marks an extension as disconnected and cleans up pending
-// tool calls that were routed to it.
+// DisconnectExtension marks an extension as disconnected and fails every
+// request still waiting on it.
 func (r *Router) DisconnectExtension(connID string) {
 	r.mu.Lock()
-	var erroredCalls []*pendingCall
+	pid := 0
 	if ext, ok := r.extensions[connID]; ok {
 		ext.connected = false
+		pid = ext.processID
 	}
+	var failed []*pendingCall
 	for reqID, call := range r.pending {
 		if call.extConnID == connID {
 			delete(r.pending, reqID)
-			erroredCalls = append(erroredCalls, call)
+			failed = append(failed, call)
 		}
 	}
-	bridgeMap := r.bridges
 	r.mu.Unlock()
 
-	for _, call := range erroredCalls {
-		r.mu.Lock()
-		bridge := bridgeMap[call.bridgeConnID]
-		r.mu.Unlock()
-		if bridge != nil {
-			sendToolResultError(bridge.send, call.toolName, call.requestID, "extension_disconnected")
-		}
+	for _, call := range failed {
+		call.ch <- extReply{failure: failDisconnected}
+	}
+	if r.svc.Sessions != nil && pid != 0 {
+		r.svc.Sessions.OnExtensionDisconnected(pid)
 	}
 	slog.Info("extension disconnected", "conn_id", connID)
 }
@@ -267,437 +287,366 @@ func (r *Router) RegisterBridge(connID, bridgeID string, sendCh chan []byte) {
 	slog.Info("bridge registered", "conn_id", connID, "bridge_id", bridgeID)
 }
 
-// DisconnectBridge removes a bridge and discards its pending calls (no
-// response needed since the bridge is gone).
+// DisconnectBridge removes a bridge and cancels its in-flight tool calls (no
+// response is needed since the bridge is gone).
 func (r *Router) DisconnectBridge(connID string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	delete(r.bridges, connID)
-	for reqID, call := range r.pending {
-		if call.bridgeConnID == connID {
-			delete(r.pending, reqID)
-		}
+	calls := r.inflight[connID]
+	delete(r.inflight, connID)
+	r.mu.Unlock()
+	for _, cancel := range calls {
+		cancel()
 	}
-	slog.Info("bridge disconnected", "conn_id", connID)
+	slog.Info("bridge disconnected", "conn_id", connID, "cancelled_calls", len(calls))
 }
 
 // ---------------------------------------------------------------------------
 // Tool call routing
 // ---------------------------------------------------------------------------
 
-// RouteToolCall handles an incoming tool_call from a bridge.
-// It either resolves the call immediately (internal tools) or forwards it
-// to the appropriate extension as an inspect_capture message.
+// toolCall is the parsed form of a tool_call handed to service handlers.
+type toolCall struct {
+	requestID    string
+	bridgeConnID string
+	name         string
+	args         map[string]interface{}
+}
+
+// RouteToolCall executes one tool_call and delivers its tool_result to the
+// originating bridge.  It blocks until the call completes; the connection
+// handler runs it in its own goroutine.
 func (r *Router) RouteToolCall(msg *ipc.ToolCallMessage, bridgeConnID string) {
-	// 1. Internal tools — no extension required.
-	if result, handled := r.handleInternalTool(msg.ToolName, msg.Arguments); handled {
-		r.mu.Lock()
-		bridge := r.bridges[bridgeConnID]
-		r.mu.Unlock()
-		if bridge != nil {
-			data := marshalToolResult(msg.RequestID, msg.ToolName, result, "")
-			safeSend(bridge.send, data)
-		}
-		return
+	args := msg.Arguments
+	if args == nil {
+		args = map[string]interface{}{}
 	}
+	call := &toolCall{requestID: msg.RequestID, bridgeConnID: bridgeConnID, name: msg.ToolName, args: args}
 
-	// 2. Forwarded inspection tools.
-	operation, ok := r.operationForTool(msg.ToolName)
+	spec, ok := toolspec.Lookup(msg.ToolName)
 	if !ok {
-		r.mu.Lock()
-		bridge := r.bridges[bridgeConnID]
-		r.mu.Unlock()
-		if bridge != nil {
-			result := map[string]interface{}{
-				"error":   "not_implemented_in_go_service",
-				"message": fmt.Sprintf("Tool %q requires the Python Shared IPC Service.", msg.ToolName),
-			}
-			data := marshalToolResult(msg.RequestID, msg.ToolName, result, "")
-			safeSend(bridge.send, data)
-		}
+		r.reply(call, map[string]interface{}{
+			"error":     errUnknownTool,
+			"tool_name": msg.ToolName,
+			"message":   fmt.Sprintf("Unknown tool %q", msg.ToolName),
+		}, "")
 		return
 	}
 
-	// 3. Select target extension.
-	instanceID, _ := msg.Arguments["instance_id"].(string)
-	ext := r.selectExtension(instanceID)
+	ctx, done := r.beginCall(bridgeConnID, msg.RequestID, r.timeout(spec.Timeout))
+	defer done()
+
+	switch spec.Route {
+	case toolspec.RouteExtension:
+		r.forward(ctx, call, spec)
+	case toolspec.RouteService:
+		h := r.handlers[spec.Name]
+		if h == nil { // guarded by TestEveryToolHasExecutionPath
+			r.reply(call, map[string]interface{}{"error": errInternalHandler, "message": "no handler for " + spec.Name}, "")
+			return
+		}
+		result := h(ctx, call)
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return // cancelled by the client, its bridge disconnecting, or shutdown
+		}
+		r.reply(call, result, "")
+	}
+}
+
+// forward sends a RouteExtension tool as a single inspect_capture request.
+func (r *Router) forward(ctx context.Context, call *toolCall, spec toolspec.Spec) {
+	instanceID, _ := call.args["instance_id"].(string)
+	ext, errResult := r.resolveExtension(instanceID)
 	if ext == nil {
-		r.mu.Lock()
-		bridge := r.bridges[bridgeConnID]
-		r.mu.Unlock()
-		var result map[string]interface{}
-		if instanceID != "" {
-			result = map[string]interface{}{
-				"status":      "session_not_found",
-				"instance_id": instanceID,
-				"message":     fmt.Sprintf("No RenderDoc GUI session found with instance_id=%q", instanceID),
-			}
-		} else {
-			result = map[string]interface{}{
-				"status":  "no_renderdoc_connected",
-				"message": "No RenderDoc GUI instances are currently connected",
-			}
-		}
-		if bridge != nil {
-			data := marshalToolResult(msg.RequestID, msg.ToolName, result, "")
-			safeSend(bridge.send, data)
-		}
+		r.reply(call, errResult, "")
 		return
 	}
-
-	// 4. Build params — strip instance_id, forward the rest.
-	params := make(map[string]interface{}, len(msg.Arguments))
-	for k, v := range msg.Arguments {
+	params := make(map[string]interface{}, len(call.args))
+	for k, v := range call.args {
 		if k != "instance_id" {
 			params[k] = v
 		}
 	}
-
-	// 5. Store pending call.
-	r.mu.Lock()
-	r.pending[msg.RequestID] = &pendingCall{
-		requestID:    msg.RequestID,
-		bridgeConnID: bridgeConnID,
-		toolName:     msg.ToolName,
-		extConnID:    ext.connID,
-		createdAt:    time.Now(),
-	}
-	r.mu.Unlock()
-
-	// 6. Send inspect_capture to extension.
-	data := marshalInspectCapture(msg.RequestID, operation, params)
-	if data == nil {
-		// Marshal failed (logged inside marshalInspectCapture). Remove the pending
-		// entry and return an error immediately rather than letting it time out.
-		r.mu.Lock()
-		delete(r.pending, msg.RequestID)
-		bridge := r.bridges[bridgeConnID]
-		r.mu.Unlock()
-		if bridge != nil {
-			sendToolResultError(bridge.send, msg.ToolName, msg.RequestID, "internal_marshal_error")
+	rep := r.callExtension(ctx, ext, call.requestID, spec.Operation, params, spec.Timeout)
+	if rep.failure != "" {
+		if rep.failure == failCancelled {
+			return // nobody is waiting for this result any more
 		}
+		r.replyFailure(call, rep.failure, spec.Operation, r.timeout(spec.Timeout))
 		return
 	}
-	safeSend(ext.send, data)
+	r.reply(call, rep.result, rep.errStr)
 }
 
-// RouteInspectCaptureResult handles an inspect_capture_result from an extension
-// and delivers the corresponding tool_result to the waiting bridge.
+// beginCall derives a per-call context and registers its cancel function
+// under the bridge so DisconnectBridge can abort it.
+func (r *Router) beginCall(bridgeConnID, requestID string, timeout time.Duration) (context.Context, func()) {
+	ctx, cancel := context.WithTimeout(r.ctx, timeout)
+	key := fmt.Sprintf("%s#%p", requestID, ctx)
+	r.mu.Lock()
+	if r.inflight[bridgeConnID] == nil {
+		r.inflight[bridgeConnID] = map[string]context.CancelFunc{}
+	}
+	r.inflight[bridgeConnID][key] = cancel
+	r.mu.Unlock()
+	return ctx, func() {
+		r.mu.Lock()
+		if m := r.inflight[bridgeConnID]; m != nil {
+			delete(m, key)
+			if len(m) == 0 {
+				delete(r.inflight, bridgeConnID)
+			}
+		}
+		r.mu.Unlock()
+		cancel()
+	}
+}
+
+// CancelToolCall cancels the in-flight call requestID of a bridge (sent as
+// tool_cancel when the MCP client abandons a call).  Composite tools stop
+// before their next extension request; an extension operation already running
+// on RenderDoc's GUI thread cannot be interrupted and its late result is
+// discarded.  It reports whether a call was found.
+func (r *Router) CancelToolCall(bridgeConnID, requestID string) bool {
+	prefix := requestID + "#"
+	var cancels []context.CancelFunc
+	r.mu.Lock()
+	for key, cancel := range r.inflight[bridgeConnID] {
+		if strings.HasPrefix(key, prefix) {
+			cancels = append(cancels, cancel)
+		}
+	}
+	r.mu.Unlock()
+	for _, c := range cancels {
+		c()
+	}
+	return len(cancels) > 0
+}
+
+func (r *Router) bridgeGone(bridgeConnID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.bridges[bridgeConnID]
+	return !ok
+}
+
+// reply sends a tool_result to the call's bridge (dropped if it is gone).
+func (r *Router) reply(call *toolCall, result interface{}, errMsg string) {
+	r.mu.Lock()
+	bridge := r.bridges[call.bridgeConnID]
+	r.mu.Unlock()
+	if bridge != nil {
+		safeSend(bridge.send, marshalToolResult(call.requestID, call.name, result, errMsg))
+	}
+}
+
+func failureMessage(failure, operation string, timeout time.Duration) string {
+	switch failure {
+	case failTimeout:
+		return fmt.Sprintf("RenderDoc extension did not answer %q within %s (RenderDoc busy or blocked by a dialog)", operation, timeout)
+	case failDisconnected:
+		return "RenderDoc extension disconnected before answering"
+	case failQueueFull:
+		return "RenderDoc extension outbound queue is full; retry later"
+	case failCancelled:
+		return "Tool call cancelled"
+	case failMarshal:
+		return "Could not serialise the request for the extension"
+	}
+	return failure
+}
+
+// replyFailure reports a transport-level failure in the legacy shape
+// ({"error": code, "message": …} plus ToolResultMessage.error = code).
+func (r *Router) replyFailure(call *toolCall, failure, operation string, timeout time.Duration) {
+	r.reply(call, map[string]interface{}{
+		"error":   failure,
+		"message": failureMessage(failure, operation, timeout),
+	}, failure)
+}
+
+// callExtension sends one inspect_capture request and waits for its result,
+// the per-request timeout, cancellation of ctx, or extension disconnect.
+func (r *Router) callExtension(ctx context.Context, ext *extState, requestID, operation string, params map[string]interface{}, timeout time.Duration) extReply {
+	if params == nil {
+		params = map[string]interface{}{}
+	}
+	return r.request(ctx, ext, requestID, operation, timeout, func(id string) []byte {
+		return marshalInspectCapture(id, operation, params)
+	})
+}
+
+// request implements the request/response exchange shared by inspect_capture
+// and execute_gui_command.
+func (r *Router) request(ctx context.Context, ext *extState, requestID, operation string, timeout time.Duration, build func(id string) []byte) extReply {
+	timeout = r.timeout(timeout)
+	call := &pendingCall{extConnID: ext.connID, operation: operation, ch: make(chan extReply, 1)}
+
+	r.mu.Lock()
+	if !ext.connected {
+		r.mu.Unlock()
+		return extReply{failure: failDisconnected}
+	}
+	if requestID == "" || r.pending[requestID] != nil {
+		requestID = newUUID()
+	}
+	call.requestID = requestID
+	r.pending[requestID] = call
+	r.mu.Unlock()
+
+	remove := func() {
+		r.mu.Lock()
+		if r.pending[requestID] == call {
+			delete(r.pending, requestID)
+		}
+		r.mu.Unlock()
+	}
+
+	data := build(requestID)
+	if data == nil {
+		remove()
+		return extReply{failure: failMarshal}
+	}
+	if !safeSend(ext.send, data) {
+		remove()
+		return extReply{failure: failQueueFull}
+	}
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case rep := <-call.ch:
+		return rep
+	case <-timer.C:
+		remove()
+		slog.Warn("extension request timed out", "operation", operation, "timeout", timeout, "ext", ext.connID)
+		return extReply{failure: failTimeout}
+	case <-ctx.Done():
+		remove()
+		if ctx.Err() == context.DeadlineExceeded {
+			return extReply{failure: failTimeout}
+		}
+		return extReply{failure: failCancelled}
+	}
+}
+
+// deliver hands a reply to the pending request, if still waiting.  When
+// fromConnID is non-empty the reply is only accepted from the extension the
+// request was sent to.
+func (r *Router) deliver(fromConnID, requestID string, rep extReply) {
+	r.mu.Lock()
+	call := r.pending[requestID]
+	if call != nil && fromConnID != "" && call.extConnID != fromConnID {
+		r.mu.Unlock()
+		slog.Warn("ignoring reply from a different extension", "request_id", requestID, "from", fromConnID)
+		return
+	}
+	if call != nil {
+		delete(r.pending, requestID)
+	}
+	r.mu.Unlock()
+	if call != nil {
+		call.ch <- rep
+	}
+}
+
+// RouteInspectCaptureResult delivers an inspect_capture_result to the waiting
+// tool call.  Late results (after timeout/cancel) are dropped.
 func (r *Router) RouteInspectCaptureResult(msg *ipc.InspectCaptureResultMessage) {
-	r.mu.Lock()
-	call := r.pending[msg.RequestID]
-	if call != nil {
-		delete(r.pending, msg.RequestID)
-	}
-	var bridge *bridgeState
-	if call != nil {
-		bridge = r.bridges[call.bridgeConnID]
-	}
-	r.mu.Unlock()
-
-	if bridge == nil {
-		return // bridge disconnected
-	}
-	toolName := ""
-	if call != nil {
-		toolName = call.toolName
-	}
-	data := marshalToolResult(msg.RequestID, toolName, msg.Result, msg.Error)
-	safeSend(bridge.send, data)
+	r.RouteInspectCaptureResultFrom("", msg)
 }
 
-// ---------------------------------------------------------------------------
-// Internal tool implementations
-// ---------------------------------------------------------------------------
-
-func (r *Router) handleInternalTool(toolName string, arguments map[string]interface{}) (map[string]interface{}, bool) {
-	switch toolName {
-	case "server_status":
-		return r.toolServerStatus(), true
-	case "list_renderdoc_sessions":
-		return r.toolListRenderdocSessions(), true
-	case "get_renderdoc_session_state":
-		instanceID, _ := arguments["instance_id"].(string)
-		return r.toolGetRenderdocSessionState(instanceID), true
-	case "get_current_capture":
-		instanceID, _ := arguments["instance_id"].(string)
-		return r.toolGetCurrentCapture(instanceID), true
-	case "instance_gui_state":
-		instanceID, _ := arguments["instance_id"].(string)
-		return r.toolInstanceGuiState(instanceID), true
-	}
-	return nil, false
+// RouteInspectCaptureResultFrom is RouteInspectCaptureResult restricted to
+// replies from the extension connection extConnID.
+func (r *Router) RouteInspectCaptureResultFrom(extConnID string, msg *ipc.InspectCaptureResultMessage) {
+	r.deliver(extConnID, msg.RequestID, extReply{result: msg.Result, errStr: msg.Error})
 }
 
-func (r *Router) toolServerStatus() map[string]interface{} {
-	r.mu.Lock()
-	extCount := len(r.extensions)
-	activeExt := 0
-	for _, e := range r.extensions {
-		if e.connected {
-			activeExt++
-		}
-	}
-	r.mu.Unlock()
-
-	return map[string]interface{}{
-		"server_name":                "RenderEyeMCP",
-		"server_version":             config.GoServiceVersion,
-		"os":                         runtime.GOOS,
-		"go_version":                 runtime.Version(),
-		"ipc_listener_status":        "running",
-		"extension_connections":      extCount,
-		"active_extension_connections": activeExt,
-		"ipc_protocol_version":       ipc.ProtocolVersion,
-		"service_instance_id":        r.serviceInstanceID,
-	}
-}
-
-func (r *Router) toolListRenderdocSessions() map[string]interface{} {
-	r.mu.Lock()
-	sessions := make([]map[string]interface{}, 0, len(r.extensions))
-	for _, e := range r.extensions {
-		sessions = append(sessions, e.toGuiSessionDict())
-	}
-	r.mu.Unlock()
-	return map[string]interface{}{
-		"sessions": sessions,
-		"total":    len(sessions),
-	}
-}
-
-func (r *Router) toolGetRenderdocSessionState(instanceID string) map[string]interface{} {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, e := range r.extensions {
-		if e.instanceID == instanceID {
-			return e.toGuiSessionDict()
-		}
-	}
-	return map[string]interface{}{
-		"error":       "session_not_found",
-		"instance_id": instanceID,
-		"message":     fmt.Sprintf("No RenderDoc GUI session found with instance_id=%q", instanceID),
-	}
-}
-
-func (r *Router) toolGetCurrentCapture(instanceID string) map[string]interface{} {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if instanceID != "" {
-		for _, e := range r.extensions {
-			if e.instanceID == instanceID {
-				return r.captureStatusForExt(e)
-			}
-		}
-		return map[string]interface{}{
-			"status":      "session_not_found",
-			"instance_id": instanceID,
-			"message":     fmt.Sprintf("No RenderDoc GUI session found with instance_id=%q", instanceID),
-		}
-	}
-
-	var connected []*extState
-	for _, e := range r.extensions {
-		if e.connected {
-			connected = append(connected, e)
-		}
-	}
-	if len(connected) == 0 {
-		return map[string]interface{}{
-			"status":  "no_renderdoc_connected",
-			"message": "No RenderDoc GUI instances are currently connected",
-		}
-	}
-	var loaded []*extState
-	for _, e := range connected {
-		if e.capLoaded {
-			loaded = append(loaded, e)
-		}
-	}
-	if len(loaded) == 0 {
-		return map[string]interface{}{
-			"status":   "no_capture_loaded",
-			"message":  "Connected RenderDoc GUI instance(s) have no capture loaded",
-			"sessions": guiSessionList(connected),
-		}
-	}
-	if len(loaded) == 1 {
-		return r.captureStatusForExt(loaded[0])
-	}
-	return map[string]interface{}{
-		"status":   "ambiguous",
-		"message":  fmt.Sprintf("Multiple RenderDoc GUI sessions have a capture loaded (%d). Specify instance_id.", len(loaded)),
-		"sessions": guiSessionList(loaded),
-	}
-}
-
-func (r *Router) captureStatusForExt(e *extState) map[string]interface{} {
-	if !e.connected {
-		return map[string]interface{}{
-			"status":           "session_disconnected",
-			"instance_id":      e.instanceID,
-			"connection_state": "disconnected",
-			"message":          "The specified RenderDoc GUI session is not currently connected",
-		}
-	}
-	if !e.capLoaded {
-		return map[string]interface{}{
-			"status":           "no_capture_loaded",
-			"instance_id":      e.instanceID,
-			"connection_state": "connected",
-			"capture_state":    e.capState,
-			"message":          "The specified RenderDoc GUI session has no capture loaded",
-		}
-	}
-	return map[string]interface{}{
-		"status":           "loaded",
-		"instance_id":      e.instanceID,
-		"process_id":       e.processID,
-		"connection_state": "connected",
-		"capture_path":     e.capPath,
-		"capture_state":    e.capState,
-		"state_version":    e.revision,
-	}
-}
-
-func (r *Router) toolInstanceGuiState(instanceID string) map[string]interface{} {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, e := range r.extensions {
-		if e.instanceID == instanceID && e.connected {
-			m := map[string]interface{}{
-				"connection_id":     e.connID,
-				"instance_id":       e.instanceID,
-				"process_id":        e.processID,
-				"extension_version": e.extVersion,
-				"renderdoc_version": e.rdocVersion,
-				"connected":         e.connected,
-				"connection_state":  "connected",
-				"capture_loaded":    e.capLoaded,
-				"capture_path":      e.capPath,
-				"capture_state":     e.capState,
-				"gui_state_revision": e.revision,
-				"freshness":         "fresh",
-			}
-			return m
-		}
-	}
-	return map[string]interface{}{
-		"instance_id":      instanceID,
-		"connected":        false,
-		"capture_loaded":   false,
-		"capture_path":     nil,
-		"capture_state":    "unknown",
-		"freshness":        "unavailable",
-	}
+// RouteGuiCommandResult delivers a gui_command_result from extConnID to the
+// waiting caller.
+func (r *Router) RouteGuiCommandResult(extConnID string, msg *ipc.GuiCommandResultMessage) {
+	r.deliver(extConnID, msg.RequestID, extReply{gui: msg})
 }
 
 // ---------------------------------------------------------------------------
 // Extension selection
 // ---------------------------------------------------------------------------
 
-// selectExtension picks the best extension for a tool call.
-// If instanceID is set it must match.  Otherwise the preference order is:
-//
-//  1. Single connected extension.
-//  2. Single connected extension with a loaded capture.
-//  3. Any connected extension (ambiguous — returns nil if > 1 with loaded captures).
+// selectExtension picks the target extension: the one matching instanceID, or
+// the only connected one, or the only connected one with a loaded capture.
+// It returns nil when no extension qualifies or the choice is ambiguous.
 func (r *Router) selectExtension(instanceID string) *extState {
+	ext, _ := r.resolveExtension(instanceID)
+	return ext
+}
+
+// resolveExtension is selectExtension plus the structured result to return
+// when no extension can be selected.
+func (r *Router) resolveExtension(instanceID string) (*extState, map[string]interface{}) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	if instanceID != "" {
+		var disconnected *extState
 		for _, e := range r.extensions {
-			if e.instanceID == instanceID && e.connected {
-				return e
+			if e.instanceID != instanceID {
+				continue
+			}
+			if e.connected {
+				return e, nil
+			}
+			disconnected = e
+		}
+		if disconnected != nil {
+			return nil, map[string]interface{}{
+				"status":           "session_disconnected",
+				"instance_id":      instanceID,
+				"connection_state": "disconnected",
+				"message":          "The specified RenderDoc GUI session is not currently connected",
 			}
 		}
-		return nil
+		return nil, map[string]interface{}{
+			"status":      "session_not_found",
+			"instance_id": instanceID,
+			"message":     fmt.Sprintf("No RenderDoc GUI session found with instance_id=%q", instanceID),
+		}
 	}
 
-	var connected []*extState
+	var connected, loaded []*extState
 	for _, e := range r.extensions {
 		if e.connected {
 			connected = append(connected, e)
-		}
-	}
-	if len(connected) == 0 {
-		return nil
-	}
-	if len(connected) == 1 {
-		return connected[0]
-	}
-
-	var loaded []*extState
-	for _, e := range connected {
-		if e.capLoaded {
-			loaded = append(loaded, e)
-		}
-	}
-	if len(loaded) == 1 {
-		return loaded[0]
-	}
-	return nil // ambiguous
-}
-
-// ---------------------------------------------------------------------------
-// Timeout cleanup
-// ---------------------------------------------------------------------------
-
-// timeoutLoop periodically expires pending tool calls that have not received
-// a response within toolCallTimeout.  It exits when r.done is closed.
-func (r *Router) timeoutLoop() {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-r.done:
-			return
-		case <-ticker.C:
-		}
-
-		now := time.Now()
-		r.mu.Lock()
-		var expired []*pendingCall
-		for reqID, call := range r.pending {
-			if now.Sub(call.createdAt) > toolCallTimeout {
-				delete(r.pending, reqID)
-				expired = append(expired, call)
+			if e.capLoaded {
+				loaded = append(loaded, e)
 			}
 		}
-		bridges := r.bridges
-		r.mu.Unlock()
-
-		for _, call := range expired {
-			r.mu.Lock()
-			bridge := bridges[call.bridgeConnID]
-			r.mu.Unlock()
-			if bridge != nil {
-				slog.Warn("tool call timed out", "tool", call.toolName, "bridge", call.bridgeConnID)
-				sendToolResultError(bridge.send, call.toolName, call.requestID, "timeout")
-			}
+	}
+	switch {
+	case len(connected) == 0:
+		return nil, map[string]interface{}{
+			"status":  "no_renderdoc_connected",
+			"message": "No RenderDoc GUI instances are currently connected",
 		}
+	case len(connected) == 1:
+		return connected[0], nil
+	case len(loaded) == 1:
+		return loaded[0], nil
+	}
+	candidates := loaded
+	if len(candidates) == 0 {
+		candidates = connected
+	}
+	return nil, map[string]interface{}{
+		"status": "ambiguous",
+		"message": fmt.Sprintf("Multiple RenderDoc GUI sessions are connected (%d, %d with a loaded capture). "+
+			"Specify instance_id to target a specific session.", len(connected), len(loaded)),
+		"sessions": guiSessionList(candidates),
 	}
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-// operationForTool returns the inspect_capture operation name for toolName.
-// The second return is false if the tool is not an inspection tool.
-func (r *Router) operationForTool(toolName string) (string, bool) {
-	if !inspectionTools[toolName] {
-		return "", false
-	}
-	if op, ok := toolToOperation[toolName]; ok {
-		return op, true
-	}
-	// Same name by convention.
-	return toolName, true
-}
 
 func guiSessionList(exts []*extState) []map[string]interface{} {
 	out := make([]map[string]interface{}, 0, len(exts))
@@ -708,20 +657,21 @@ func guiSessionList(exts []*extState) []map[string]interface{} {
 }
 
 // safeSend attempts to send data on ch without blocking.  If the queue is full
-// the message is dropped with a warning (bounded queue policy).
-func safeSend(ch chan []byte, data []byte) {
+// (or the connection is closing) the message is dropped with a warning and
+// false is returned (bounded queue policy).
+func safeSend(ch chan []byte, data []byte) (sent bool) {
+	defer func() {
+		if recover() != nil { // channel closed by a disconnecting handler
+			sent = false
+		}
+	}()
 	select {
 	case ch <- data:
+		return true
 	default:
 		slog.Warn("outbound queue full; message dropped")
+		return false
 	}
-}
-
-// sendToolResultError sends an error tool_result to a bridge's send channel.
-func sendToolResultError(sendCh chan []byte, toolName, requestID, errMsg string) {
-	result := map[string]interface{}{"error": errMsg, "message": errMsg}
-	data := marshalToolResult(requestID, toolName, result, errMsg)
-	safeSend(sendCh, data)
 }
 
 // marshalToolResult serialises a ToolResultMessage to a newline-terminated JSON frame.
@@ -761,7 +711,7 @@ func marshalInspectCapture(requestID, operation string, params map[string]interf
 }
 
 // WriteReadyFile writes the service-ready JSON to the well-known path so that
-// Python bridge processes know the service is accepting connections.
+// bridge processes know the service is accepting connections.
 func WriteReadyFile(serviceInstanceID, host string, port, pid int) {
 	data, _ := json.Marshal(map[string]interface{}{
 		"pid":         pid,

@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"time"
 )
 
 const (
@@ -15,11 +17,34 @@ const (
 	GoServiceVersion = "1.0.0-go"
 )
 
+// CaptureDirectory is one watched capture folder.
+type CaptureDirectory struct {
+	Path      string
+	Recursive bool
+}
+
+// CaptureConfig configures the capture-file registry.
+type CaptureConfig struct {
+	Enabled           bool
+	ScanInterval      time.Duration
+	StabilityDuration time.Duration
+	MinFileSize       int64
+	Directories       []CaptureDirectory
+}
+
 // Config holds resolved runtime settings.
 type Config struct {
 	IPCHost  string
 	IPCPort  int
 	LogLevel string
+
+	// RenderdocExe is the explicit qrenderdoc executable; empty probes the
+	// standard install locations.
+	RenderdocExe string
+	// StoragePath is the SQLite database holding capture and session records.
+	StoragePath string
+	// Capture configures the capture-file registry.
+	Capture CaptureConfig
 }
 
 // FromEnv builds a Config from environment variables, falling back to defaults.
@@ -35,10 +60,78 @@ func FromEnv() *Config {
 		port = DefaultPort
 	}
 	return &Config{
-		IPCHost:  host,
-		IPCPort:  port,
-		LogLevel: getEnv("RENDEREYE_LOG_LEVEL", "info"),
+		IPCHost:      host,
+		IPCPort:      port,
+		LogLevel:     getEnv("RENDEREYE_LOG_LEVEL", "info"),
+		RenderdocExe: os.Getenv("RENDEREYE_RENDERDOC_EXE"),
+		StoragePath:  getEnv("RENDEREYE_STORAGE_PATH", DefaultStoragePath()),
+		Capture:      captureFromEnv(),
 	}
+}
+
+// DefaultCaptureConfig returns the registry defaults (no watched folders).
+func DefaultCaptureConfig() CaptureConfig {
+	return CaptureConfig{
+		Enabled:           true,
+		ScanInterval:      10 * time.Second,
+		StabilityDuration: 2 * time.Second,
+		MinFileSize:       4,
+	}
+}
+
+func captureFromEnv() CaptureConfig {
+	c := DefaultCaptureConfig()
+	if v := os.Getenv("RENDEREYE_CAPTURE_ENABLED"); v != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "0", "false", "no", "off":
+			c.Enabled = false
+		}
+	}
+	if d, ok := envSeconds("RENDEREYE_CAPTURE_SCAN_INTERVAL"); ok && d > 0 {
+		c.ScanInterval = d
+	}
+	if d, ok := envSeconds("RENDEREYE_CAPTURE_STABILITY_SECONDS"); ok && d >= 0 {
+		c.StabilityDuration = d
+	}
+	recursive := false
+	if v := strings.ToLower(strings.TrimSpace(os.Getenv("RENDEREYE_CAPTURE_RECURSIVE"))); v == "1" || v == "true" || v == "yes" {
+		recursive = true
+	}
+	// os.PathListSeparator: ';' on Windows (drive letters contain ':'), ':' elsewhere.
+	for _, p := range strings.Split(os.Getenv("RENDEREYE_CAPTURE_DIRS"), string(os.PathListSeparator)) {
+		if p = strings.TrimSpace(p); p != "" {
+			c.Directories = append(c.Directories, CaptureDirectory{Path: p, Recursive: recursive})
+		}
+	}
+	return c
+}
+
+func envSeconds(key string) (time.Duration, bool) {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return 0, false
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return 0, false
+	}
+	return time.Duration(f * float64(time.Second)), true
+}
+
+// DefaultStoragePath is %APPDATA%/rendereye_mcp/captures.db on Windows (the
+// same file the former Python service used) and the user config dir elsewhere.
+func DefaultStoragePath() string {
+	base := os.Getenv("APPDATA")
+	if base == "" {
+		if d, err := os.UserConfigDir(); err == nil {
+			base = d
+		} else if h, err := os.UserHomeDir(); err == nil {
+			base = h
+		} else {
+			base = tempDir()
+		}
+	}
+	return filepath.Join(base, "rendereye_mcp", "captures.db")
 }
 
 func getEnv(key, def string) string {

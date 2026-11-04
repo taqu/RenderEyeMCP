@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"sync"
 	"testing"
@@ -9,17 +10,10 @@ import (
 	"github.com/taqu/rendereye-mcp/internal/ipc"
 )
 
-// newTestRouter returns a Router with a fake auth that accepts any token.
+// newTestRouter returns a Router with a fake auth that accepts any token and
+// no registry/session subsystems.
 func newTestRouter() *Router {
-	r := &Router{
-		serviceInstanceID: "test-service",
-		auth:              &Auth{token: "test-token"},
-		extensions:        make(map[string]*extState),
-		bridges:           make(map[string]*bridgeState),
-		pending:           make(map[string]*pendingCall),
-	}
-	// Don't start the timeout loop in unit tests.
-	return r
+	return NewRouter("test-service", &Auth{token: "test-token"})
 }
 
 // addExt registers a mock extension in the router and returns its send channel.
@@ -91,6 +85,31 @@ func trimNewline(b []byte) []byte {
 	return b
 }
 
+// startForwardedCall launches a forwarded tool call and returns once the
+// extension has received the inspect_capture request.
+func startForwardedCall(t *testing.T, r *Router, extCh chan []byte, bridgeConnID, reqID, tool string) ipc.InspectCaptureRequestMessage {
+	t.Helper()
+	go r.RouteToolCall(&ipc.ToolCallMessage{RequestID: reqID, ToolName: tool, Arguments: map[string]interface{}{}, Type: "tool_call"}, bridgeConnID)
+	return receiveInspectCapture(t, extCh, time.Second)
+}
+
+func pendingCount(r *Router) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.pending)
+}
+
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 // ---------------------------------------------------------------------------
 
 func TestRouteToolCall_internalTool(t *testing.T) {
@@ -120,15 +139,7 @@ func TestRouteToolCall_inspectionForwarded(t *testing.T) {
 	extCh := addExt(r, "ext-1", "inst-1", true)
 	bridgeCh := addBridge(r, "bridge-1")
 
-	msg := &ipc.ToolCallMessage{
-		RequestID: "req-2",
-		ToolName:  "get_current_capture_info",
-		Arguments: map[string]interface{}{},
-		Type:      "tool_call",
-	}
-	r.RouteToolCall(msg, "bridge-1")
-
-	inspectMsg := receiveInspectCapture(t, extCh, time.Second)
+	inspectMsg := startForwardedCall(t, r, extCh, "bridge-1", "req-2", "get_current_capture_info")
 	if inspectMsg.Operation != "capture_info" {
 		t.Errorf("operation got %q want %q", inspectMsg.Operation, "capture_info")
 	}
@@ -137,12 +148,10 @@ func TestRouteToolCall_inspectionForwarded(t *testing.T) {
 	}
 
 	// Simulate extension response.
-	resultData := map[string]interface{}{"path": "/cap.rdc"}
 	r.RouteInspectCaptureResult(&ipc.InspectCaptureResultMessage{
 		RequestID: "req-2",
 		Operation: "capture_info",
-		Result:    resultData,
-		Error:     "",
+		Result:    map[string]interface{}{"path": "/cap.rdc"},
 		Type:      "inspect_capture_result",
 	})
 
@@ -163,7 +172,7 @@ func TestRouteToolCall_instanceIDStripped(t *testing.T) {
 	extCh := addExt(r, "ext-1", "inst-A", true)
 	addBridge(r, "bridge-1")
 
-	msg := &ipc.ToolCallMessage{
+	go r.RouteToolCall(&ipc.ToolCallMessage{
 		RequestID: "req-3",
 		ToolName:  "get_pipeline_state",
 		Arguments: map[string]interface{}{
@@ -172,14 +181,13 @@ func TestRouteToolCall_instanceIDStripped(t *testing.T) {
 			"section":     "summary",
 		},
 		Type: "tool_call",
-	}
-	r.RouteToolCall(msg, "bridge-1")
+	}, "bridge-1")
 
 	inspectMsg := receiveInspectCapture(t, extCh, time.Second)
 	if _, hasID := inspectMsg.Params["instance_id"]; hasID {
 		t.Error("instance_id should be stripped from inspect_capture params")
 	}
-	if v, _ := inspectMsg.Params["event_id"]; v == nil {
+	if v := inspectMsg.Params["event_id"]; v == nil {
 		t.Error("event_id should be in inspect_capture params")
 	}
 }
@@ -188,95 +196,78 @@ func TestRouteToolCall_noExtension(t *testing.T) {
 	r := newTestRouter()
 	bridgeCh := addBridge(r, "bridge-1")
 
-	msg := &ipc.ToolCallMessage{
+	r.RouteToolCall(&ipc.ToolCallMessage{
 		RequestID: "req-4",
 		ToolName:  "list_capture_events",
 		Arguments: map[string]interface{}{},
 		Type:      "tool_call",
-	}
-	r.RouteToolCall(msg, "bridge-1")
+	}, "bridge-1")
 
 	result := receiveToolResult(t, bridgeCh, time.Second)
 	resultMap, _ := result.Result.(map[string]interface{})
 	if resultMap == nil {
 		t.Fatal("expected result map")
 	}
-	status, _ := resultMap["status"].(string)
-	if status != "no_renderdoc_connected" {
+	if status, _ := resultMap["status"].(string); status != "no_renderdoc_connected" {
 		t.Errorf("expected no_renderdoc_connected status, got %q", status)
 	}
 }
 
-func TestRouteToolCall_notImplemented(t *testing.T) {
+func TestRouteToolCall_unknownTool(t *testing.T) {
 	r := newTestRouter()
 	bridgeCh := addBridge(r, "bridge-1")
 
-	msg := &ipc.ToolCallMessage{
+	r.RouteToolCall(&ipc.ToolCallMessage{
 		RequestID: "req-5",
-		ToolName:  "capture_list",
+		ToolName:  "no_such_tool",
 		Arguments: map[string]interface{}{},
 		Type:      "tool_call",
-	}
-	r.RouteToolCall(msg, "bridge-1")
+	}, "bridge-1")
 
 	result := receiveToolResult(t, bridgeCh, time.Second)
 	resultMap, _ := result.Result.(map[string]interface{})
 	if resultMap == nil {
 		t.Fatal("expected result map")
 	}
-	if _, hasErr := resultMap["error"]; !hasErr {
-		t.Error("expected error in result for not-implemented tool")
+	if resultMap["error"] != errUnknownTool {
+		t.Errorf("expected error=%s, got %v", errUnknownTool, resultMap["error"])
 	}
 }
 
 func TestDisconnectExtension_errorsPendingCalls(t *testing.T) {
 	r := newTestRouter()
-	addExt(r, "ext-1", "inst-1", true)
+	extCh := addExt(r, "ext-1", "inst-1", true)
 	bridgeCh := addBridge(r, "bridge-1")
 
-	// Store a pending call manually.
-	r.mu.Lock()
-	r.pending["req-99"] = &pendingCall{
-		requestID:    "req-99",
-		bridgeConnID: "bridge-1",
-		toolName:     "list_resources",
-		extConnID:    "ext-1",
-		createdAt:    time.Now(),
-	}
-	r.mu.Unlock()
-
+	req := startForwardedCall(t, r, extCh, "bridge-1", "req-99", "list_resources")
 	r.DisconnectExtension("ext-1")
 
 	result := receiveToolResult(t, bridgeCh, time.Second)
-	if result.Error != "extension_disconnected" {
+	if result.Error != failDisconnected {
 		t.Errorf("expected extension_disconnected error, got %q", result.Error)
+	}
+	if result.RequestID != "req-99" || req.RequestID != "req-99" {
+		t.Errorf("request_id mismatch: tool_result %q, inspect %q", result.RequestID, req.RequestID)
+	}
+	if n := pendingCount(r); n != 0 {
+		t.Errorf("pending map should be empty after disconnect, has %d entries", n)
 	}
 }
 
 func TestDisconnectBridge_cleansPendingCalls(t *testing.T) {
 	r := newTestRouter()
-	addExt(r, "ext-1", "inst-1", true)
+	extCh := addExt(r, "ext-1", "inst-1", true)
 	addBridge(r, "bridge-1")
 
-	r.mu.Lock()
-	r.pending["req-100"] = &pendingCall{
-		requestID:    "req-100",
-		bridgeConnID: "bridge-1",
-		toolName:     "get_texture_info",
-		extConnID:    "ext-1",
-		createdAt:    time.Now(),
-	}
-	r.mu.Unlock()
-
+	startForwardedCall(t, r, extCh, "bridge-1", "req-100", "get_texture_info")
 	r.DisconnectBridge("bridge-1")
 
-	r.mu.Lock()
-	_, exists := r.pending["req-100"]
-	r.mu.Unlock()
-
-	if exists {
-		t.Error("pending call should be removed when bridge disconnects")
-	}
+	waitFor(t, "pending call removal", func() bool { return pendingCount(r) == 0 })
+	waitFor(t, "in-flight release", func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return len(r.inflight) == 0
+	})
 }
 
 func TestListRenderdocSessions(t *testing.T) {
@@ -284,7 +275,7 @@ func TestListRenderdocSessions(t *testing.T) {
 	addExt(r, "ext-1", "inst-1", true)
 	addExt(r, "ext-2", "inst-2", false)
 
-	result := r.toolListRenderdocSessions()
+	result := r.toolListRenderdocSessions(context.Background(), &toolCall{args: map[string]interface{}{}})
 	sessions, _ := result["sessions"].([]map[string]interface{})
 	if len(sessions) != 2 {
 		t.Errorf("expected 2 sessions, got %d", len(sessions))
@@ -307,9 +298,8 @@ func TestGetCurrentCapture_singleLoaded(t *testing.T) {
 	}
 	r.mu.Unlock()
 
-	result := r.toolGetCurrentCapture("")
-	status, _ := result["status"].(string)
-	if status != "loaded" {
+	result := r.toolGetCurrentCapture(context.Background(), &toolCall{args: map[string]interface{}{}})
+	if status, _ := result["status"].(string); status != "loaded" {
 		t.Errorf("expected status=loaded, got %q", status)
 	}
 }
@@ -334,14 +324,13 @@ func TestConcurrentToolCalls(t *testing.T) {
 			}, "bridge-1")
 		}(reqID)
 	}
-	wg.Wait()
 
 	// Simulate extension responding to all inspect_capture messages.
 	for i := 0; i < n; i++ {
 		select {
 		case data := <-extCh:
 			var req ipc.InspectCaptureRequestMessage
-			json.Unmarshal(trimNewline(data), &req)
+			json.Unmarshal(trimNewline(data), &req) //nolint:errcheck
 			r.RouteInspectCaptureResult(&ipc.InspectCaptureResultMessage{
 				RequestID: req.RequestID,
 				Operation: req.Operation,
@@ -357,6 +346,7 @@ func TestConcurrentToolCalls(t *testing.T) {
 	for i := 0; i < n; i++ {
 		receiveToolResult(t, bridgeCh, 2*time.Second)
 	}
+	wg.Wait()
 }
 
 func TestSelectExtension_preferLoaded(t *testing.T) {
@@ -388,113 +378,60 @@ func TestSelectExtension_byInstanceID(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 20 reliability tests
+// Reliability: timeouts, cancellation, synchronisation
 // ---------------------------------------------------------------------------
 
-// TestRouterClose_stopsTimeoutLoop verifies that Close() stops the background
-// timeout goroutine within a reasonable time (prevents goroutine leaks).
-func TestRouterClose_stopsTimeoutLoop(t *testing.T) {
-	auth := &Auth{token: "test-token"}
-	r := NewRouter("svc-close-test", auth)
+// TestRouterClose_cancelsInflightCalls verifies that Close() aborts calls
+// waiting on an extension instead of leaving them blocked.
+func TestRouterClose_cancelsInflightCalls(t *testing.T) {
+	r := newTestRouter()
+	extCh := addExt(r, "ext-1", "inst-1", true)
+	addBridge(r, "bridge-1")
 
-	// Close should not block or panic.
 	done := make(chan struct{})
 	go func() {
-		r.Close()
+		r.RouteToolCall(&ipc.ToolCallMessage{RequestID: "req-close", ToolName: "list_shaders", Arguments: map[string]interface{}{}}, "bridge-1")
 		close(done)
 	}()
+	receiveInspectCapture(t, extCh, time.Second)
+	r.Close()
+	r.Close() // idempotent
 	select {
 	case <-done:
-		// OK
 	case <-time.After(2 * time.Second):
-		t.Fatal("Close() did not return within 2 seconds — possible goroutine leak")
+		t.Fatal("RouteToolCall did not return after Close()")
+	}
+	if n := pendingCount(r); n != 0 {
+		t.Errorf("pending map should be empty after Close, has %d", n)
 	}
 }
 
-// TestTimeoutLoop_expiresStaleCall verifies that the timeout loop errors stale
-// pending calls and delivers the error to the waiting bridge.
-func TestTimeoutLoop_expiresStaleCall(t *testing.T) {
-	auth := &Auth{token: "test-token"}
-	r := &Router{
-		serviceInstanceID: "svc-timeout-test",
-		auth:              auth,
-		extensions:        make(map[string]*extState),
-		bridges:           make(map[string]*bridgeState),
-		pending:           make(map[string]*pendingCall),
-		done:              make(chan struct{}),
-	}
-
+// TestPerCallTimeout verifies that an unanswered forwarded call returns the
+// legacy timeout result as soon as its own deadline expires, and that a late
+// reply is dropped.
+func TestPerCallTimeout(t *testing.T) {
+	r := newTestRouter()
+	r.timeoutOverride = 50 * time.Millisecond
+	extCh := addExt(r, "ext-1", "inst-1", true)
 	bridgeCh := addBridge(r, "bridge-timeout")
 
-	// Insert a pending call that is already expired.
-	r.mu.Lock()
-	r.pending["req-stale"] = &pendingCall{
-		requestID:    "req-stale",
-		bridgeConnID: "bridge-timeout",
-		toolName:     "get_texture_info",
-		extConnID:    "ext-gone",
-		createdAt:    time.Now().Add(-2 * toolCallTimeout), // definitely expired
+	startForwardedCall(t, r, extCh, "bridge-timeout", "req-stale", "get_texture_info")
+	msg := receiveToolResult(t, bridgeCh, time.Second)
+	if msg.Error != failTimeout {
+		t.Errorf("expected timeout error, got %q", msg.Error)
 	}
-	r.mu.Unlock()
+	if m, _ := msg.Result.(map[string]interface{}); m["error"] != failTimeout {
+		t.Errorf("expected result.error=timeout, got %v", msg.Result)
+	}
+	if n := pendingCount(r); n != 0 {
+		t.Errorf("pending map should be empty after timeout, has %d", n)
+	}
 
-	// Run one tick of the timeout loop inline.
-	go r.timeoutLoop()
-
-	// We should receive an error tool_result within 10 seconds (loop fires every 5s).
+	r.RouteInspectCaptureResult(&ipc.InspectCaptureResultMessage{RequestID: "req-stale", Result: map[string]interface{}{}})
 	select {
-	case data := <-bridgeCh:
-		var msg ipc.ToolResultMessage
-		if err := json.Unmarshal(trimNewline(data), &msg); err != nil {
-			t.Fatalf("unmarshal: %v", err)
-		}
-		if msg.Error != "timeout" {
-			t.Errorf("expected timeout error, got %q", msg.Error)
-		}
-	case <-time.After(12 * time.Second):
-		t.Fatal("timeout: expected stale call to be expired by timeoutLoop")
-	}
-
-	r.Close()
-}
-
-// TestRouteToolCall_marshalInspectCaptureNilGuard verifies that if
-// marshalInspectCapture cannot serialize the message (simulated by injecting a
-// non-serializable params value), the pending call is removed and the bridge
-// receives an immediate error rather than waiting for the 30-second timeout.
-// This test is indirect — it verifies the error path via a disconnected
-// extension (which triggers the same immediate-error code path).
-func TestDisconnectExtension_immediateErrorOnPendingCall(t *testing.T) {
-	r := newTestRouter()
-	addExt(r, "ext-dc", "inst-dc", true)
-	bridgeCh := addBridge(r, "bridge-dc")
-
-	r.mu.Lock()
-	r.pending["req-dc"] = &pendingCall{
-		requestID:    "req-dc",
-		bridgeConnID: "bridge-dc",
-		toolName:     "get_buffer_info",
-		extConnID:    "ext-dc",
-		createdAt:    time.Now(),
-	}
-	r.mu.Unlock()
-
-	// Disconnect the extension — pending call must be errored immediately.
-	r.DisconnectExtension("ext-dc")
-
-	result := receiveToolResult(t, bridgeCh, time.Second)
-	if result.Error != "extension_disconnected" {
-		t.Errorf("expected extension_disconnected, got %q", result.Error)
-	}
-	if result.RequestID != "req-dc" {
-		t.Errorf("expected request_id req-dc, got %q", result.RequestID)
-	}
-
-	// Pending map must be empty.
-	r.mu.Lock()
-	pending := len(r.pending)
-	r.mu.Unlock()
-	if pending != 0 {
-		t.Errorf("pending map should be empty after disconnect, has %d entries", pending)
+	case extra := <-bridgeCh:
+		t.Errorf("late reply must not produce a second tool_result: %s", extra)
+	case <-time.After(50 * time.Millisecond):
 	}
 }
 
@@ -524,29 +461,79 @@ func TestUpdateGuiState_staleRevisionIgnored(t *testing.T) {
 }
 
 // TestDisconnectBridge_doesNotAffectOtherBridges verifies that removing one
-// bridge does not touch pending calls belonging to another bridge.
+// bridge does not touch calls belonging to another bridge.
 func TestDisconnectBridge_doesNotAffectOtherBridges(t *testing.T) {
 	r := newTestRouter()
-	addExt(r, "ext-1", "inst-1", true)
+	extCh := addExt(r, "ext-1", "inst-1", true)
 	addBridge(r, "bridge-A")
-	addBridge(r, "bridge-B")
+	bridgeB := addBridge(r, "bridge-B")
 
-	r.mu.Lock()
-	r.pending["req-A"] = &pendingCall{requestID: "req-A", bridgeConnID: "bridge-A", toolName: "t", extConnID: "ext-1", createdAt: time.Now()}
-	r.pending["req-B"] = &pendingCall{requestID: "req-B", bridgeConnID: "bridge-B", toolName: "t", extConnID: "ext-1", createdAt: time.Now()}
-	r.mu.Unlock()
+	startForwardedCall(t, r, extCh, "bridge-A", "req-A", "list_shaders")
+	reqB := startForwardedCall(t, r, extCh, "bridge-B", "req-B", "list_shaders")
 
 	r.DisconnectBridge("bridge-A")
+	waitFor(t, "bridge-A call cancellation", func() bool { return pendingCount(r) == 1 })
 
 	r.mu.Lock()
-	_, aExists := r.pending["req-A"]
-	_, bExists := r.pending["req-B"]
+	_, bExists := r.pending[reqB.RequestID]
 	r.mu.Unlock()
-
-	if aExists {
-		t.Error("req-A should be removed after bridge-A disconnects")
-	}
 	if !bExists {
-		t.Error("req-B should remain after bridge-A disconnects")
+		t.Fatal("req-B should remain after bridge-A disconnects")
+	}
+	r.RouteInspectCaptureResult(&ipc.InspectCaptureResultMessage{RequestID: reqB.RequestID, Result: map[string]interface{}{"ok": true}})
+	if res := receiveToolResult(t, bridgeB, time.Second); res.RequestID != "req-B" || res.Error != "" {
+		t.Errorf("bridge-B got %+v", res)
+	}
+}
+
+// TestResolveExtension_ambiguous verifies that several loaded sessions yield
+// status=ambiguous (with candidates) rather than no_renderdoc_connected.
+func TestResolveExtension_ambiguous(t *testing.T) {
+	r := newTestRouter()
+	addExt(r, "ext-1", "inst-1", true)
+	addExt(r, "ext-2", "inst-2", true)
+	bridgeCh := addBridge(r, "bridge-1")
+
+	r.RouteToolCall(&ipc.ToolCallMessage{RequestID: "req-amb", ToolName: "list_shaders", Arguments: map[string]interface{}{}}, "bridge-1")
+	res := receiveToolResult(t, bridgeCh, time.Second)
+	m, _ := res.Result.(map[string]interface{})
+	if m["status"] != "ambiguous" {
+		t.Fatalf("expected status=ambiguous, got %v", m)
+	}
+	if s, _ := m["sessions"].([]interface{}); len(s) != 2 {
+		t.Errorf("expected 2 candidate sessions, got %v", m["sessions"])
+	}
+}
+
+// TestResolveExtension_disconnectedInstance verifies the explicit-instance
+// disconnected case.
+func TestResolveExtension_disconnectedInstance(t *testing.T) {
+	r := newTestRouter()
+	addExt(r, "ext-1", "inst-1", true)
+	r.DisconnectExtension("ext-1")
+	if _, errRes := r.resolveExtension("inst-1"); errRes["status"] != "session_disconnected" {
+		t.Errorf("expected session_disconnected, got %v", errRes)
+	}
+}
+
+// TestRouteInspectCaptureResultFrom_wrongExtensionIgnored verifies that one
+// extension cannot answer a request sent to another.
+func TestRouteInspectCaptureResultFrom_wrongExtensionIgnored(t *testing.T) {
+	r := newTestRouter()
+	extCh := addExt(r, "ext-1", "inst-1", true)
+	addExt(r, "ext-2", "inst-2", false)
+	bridgeCh := addBridge(r, "bridge-1")
+
+	go r.RouteToolCall(&ipc.ToolCallMessage{RequestID: "req-x", ToolName: "list_shaders", Arguments: map[string]interface{}{"instance_id": "inst-1"}}, "bridge-1")
+	req := receiveInspectCapture(t, extCh, time.Second)
+
+	r.RouteInspectCaptureResultFrom("ext-2", &ipc.InspectCaptureResultMessage{RequestID: req.RequestID, Result: map[string]interface{}{"forged": true}})
+	if n := pendingCount(r); n != 1 {
+		t.Fatalf("forged reply must not resolve the call (pending=%d)", n)
+	}
+	r.RouteInspectCaptureResultFrom("ext-1", &ipc.InspectCaptureResultMessage{RequestID: req.RequestID, Result: map[string]interface{}{"genuine": true}})
+	res := receiveToolResult(t, bridgeCh, time.Second)
+	if m, _ := res.Result.(map[string]interface{}); m["genuine"] != true {
+		t.Errorf("expected genuine reply, got %v", res.Result)
 	}
 }

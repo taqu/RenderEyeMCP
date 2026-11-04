@@ -17,12 +17,10 @@ import (
 
 	"github.com/taqu/rendereye-mcp/internal/config"
 	"github.com/taqu/rendereye-mcp/internal/ipc"
+	"github.com/taqu/rendereye-mcp/internal/toolspec"
 )
 
-const (
-	heartbeatInterval = 15 * time.Second
-	toolCallTimeout   = 60 * time.Second
-)
+const heartbeatInterval = 15 * time.Second
 
 // ServiceClient manages a TCP connection to the rendereye-ipc service and
 // multiplexes concurrent tool calls over it.
@@ -174,7 +172,10 @@ func (c *ServiceClient) CallTool(ctx context.Context, toolName string, arguments
 		return nil, fmt.Errorf("send tool_call: %w", err)
 	}
 
-	timeout := time.NewTimer(toolCallTimeout)
+	// The service enforces each tool's own budget and answers with a
+	// structured timeout first; the bridge waits slightly longer.
+	waitFor := toolspec.BridgeTimeout(toolName)
+	timeout := time.NewTimer(waitFor)
 	defer timeout.Stop()
 
 	select {
@@ -184,8 +185,10 @@ func (c *ServiceClient) CallTool(ctx context.Context, toolName string, arguments
 		}
 		return result.Result, nil
 	case <-timeout.C:
-		return nil, fmt.Errorf("tool_call %q timed out after %s", toolName, toolCallTimeout)
+		return nil, fmt.Errorf("tool_call %q timed out after %s", toolName, waitFor)
 	case <-ctx.Done():
+		// Tell the service the result is no longer wanted (best effort).
+		_ = c.writeMessage(ipc.ToolCancelMessage{RequestID: reqID, Type: "tool_cancel"})
 		return nil, ctx.Err()
 	case <-c.done:
 		return nil, fmt.Errorf("IPC connection closed while waiting for tool_call %q", toolName)

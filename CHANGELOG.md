@@ -9,6 +9,18 @@ merged before Phase 12. Draft notes: [docs/release_notes_v1.0.md](docs/release_n
 
 ### Added
 
+- Go Shared IPC Service now implements every registered MCP tool (25 previously returned
+  `not_implemented_in_go_service`): GPU measurement store and analysis
+  (`collect_gpu_counters` and five analysis tools), shader debug store (`debug_*_shader`,
+  `get_shader_debug_*`), the SQLite capture registry with folder watcher, managed
+  sessions, `capture_open`, `operation_get` and `instance_list`.
+- `internal/toolspec`: single catalog of tool routes and timeouts, with tests that the
+  registered tools, the service handlers and the extension operations agree.
+- Extension operation `event_tree` for `get_render_pass_performance` (older extensions
+  fall back to paged `list_events`).
+- `RENDEREYE_CAPTURE_RECURSIVE`; `server_status` reports `renderdoc_detected`,
+  `renderdoc_path` and `active_sessions`.
+
 - Bilingual documentation: `README.md` / `README.ja.md`, `docs/en/` and `docs/ja/`
   (installation, configuration, quick start, tool reference, troubleshooting,
   architecture, prompt examples, six debugging scenarios).
@@ -18,6 +30,19 @@ merged before Phase 12. Draft notes: [docs/release_notes_v1.0.md](docs/release_n
 - Release bundle includes `README.ja.md`, `LICENSE` and the `docs/` tree.
 
 ### Fixed
+
+- Per-tool service timeouts (30 s inspection, 120 s per replay, up to 5 × 120 s for
+  `collect_gpu_counters`); the bridge waits slightly longer than the service.
+- MCP cancellation and agent disconnects stop pending service work; service shutdown
+  no longer waits for idle connections to time out.
+- Several connected sessions now return `status: ambiguous` (not
+  `no_renderdoc_connected`); an explicit `instance_id` of a disconnected session returns
+  `session_disconnected`.
+- Extension replies are only accepted from the extension the request was sent to.
+- Managed sessions are matched to extensions by process ID, and focus/close never act on
+  a window owned by another process.
+- Capture GPU measurements and debug traces are marked `invalidated` when the session
+  loads a different capture.
 
 - RenderDoc 1.46: render/depth targets read from `Descriptor.resource`; `TextureSave`
   slice/sample mapping; six-argument `GetHistogram`.

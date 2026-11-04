@@ -101,3 +101,32 @@ def test_context_cleared(ctx):
 
 def test_unknown_command(ctx):
     assert GUIContext(ctx, "1.46").execute("focus_window", {})[1] == "unsupported"
+
+
+def _action(eid, flags, name="", children=()):
+    return SimpleNamespace(eventId=eid, flags=flags, customName=name, children=list(children))
+
+
+def test_event_tree_returns_marker_hierarchy(ctx):
+    ctx.loaded, ctx.path = True, "tree.rdc"
+    draw, dispatch, marker = 2, 4, 64
+    ctx.CurRootActions = lambda: [
+        _action(1, marker, "Shadow", [_action(2, draw, "Draw A"), _action(3, dispatch)]),
+        _action(4, draw, "Draw B"),
+    ]
+    result = GUIContext(ctx, "1.46").inspect("event_tree", {})
+    assert result["_capture_path"] == "tree.rdc"
+    assert result["total_nodes"] == 4 and result["truncated"] is False
+    shadow, draw_b = result["events"]
+    assert shadow["action_type"] == "marker_begin" and shadow["name"] == "Shadow"
+    assert [c["event_id"] for c in shadow["children"]] == [2, 3]
+    assert shadow["children"][1]["action_type"] == "dispatch"
+    assert shadow["children"][1]["name"] == "Event 3"
+    assert draw_b["children"] == []
+
+
+def test_event_tree_truncates(ctx):
+    ctx.loaded, ctx.path = True, "tree.rdc"
+    ctx.CurRootActions = lambda: [_action(i, 2) for i in range(1, 6)]
+    result = GUIContext(ctx, "1.46").inspect("event_tree", {"max_nodes": 3})
+    assert len(result["events"]) == 3 and result["truncated"] is True

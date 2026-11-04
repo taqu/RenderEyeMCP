@@ -203,6 +203,13 @@ type ToolCallMessage struct {
 	Type               string                 `json:"type"`
 }
 
+// ToolCancelMessage is sent by the bridge when the MCP client abandons a
+// pending tool call, so the service can stop work it has not started yet.
+type ToolCancelMessage struct {
+	RequestID string `json:"request_id"`
+	Type      string `json:"type"`
+}
+
 // ToolResultMessage carries the result of a tool call back to the bridge.
 type ToolResultMessage struct {
 	RequestID string      `json:"request_id"`

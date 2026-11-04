@@ -30,7 +30,7 @@ type connHandler struct {
 	logger *slog.Logger
 
 	// Role flags — set during handshake.
-	isExt   bool
+	isExt    bool
 	isBridge bool
 
 	// Per-connection identifiers assigned by the router.
@@ -66,6 +66,13 @@ func (h *connHandler) Run(ctx context.Context) {
 	go func() {
 		defer close(writerDone)
 		h.writeLoop(ctx)
+	}()
+
+	// A blocking read ignores ctx; closing the socket on shutdown unblocks it
+	// immediately instead of waiting for the read deadline (up to 60 s).
+	go func() {
+		<-ctx.Done()
+		h.conn.Close()
 	}()
 
 	h.readLoop(ctx)
@@ -143,6 +150,13 @@ func (h *connHandler) dispatch(line []byte) error {
 			return h.handleToolCall(line)
 		}
 		h.sendError(requestIDFrom(line), "not_a_bridge", "tool_call requires bridge registration first")
+	case "tool_cancel":
+		if h.isBridge {
+			var msg ipc.ToolCancelMessage
+			if err := json.Unmarshal(line, &msg); err == nil {
+				h.router.CancelToolCall(h.bridgeConnID, msg.RequestID)
+			}
+		}
 
 	// Extension active
 	case "heartbeat":
@@ -302,8 +316,14 @@ func (h *connHandler) handleGuiStateResponse(line []byte) error {
 }
 
 func (h *connHandler) handleGuiCommandResult(line []byte) error {
-	// Not used by Phase 17 tool routing; logged for completeness.
-	h.logger.Debug("gui_command_result received", "peer", h.peer)
+	var msg ipc.GuiCommandResultMessage
+	if err := json.Unmarshal(line, &msg); err != nil {
+		h.logger.Warn("failed to parse gui_command_result", "peer", h.peer, "err", err)
+		return nil
+	}
+	if h.isExt {
+		h.router.RouteGuiCommandResult(h.extConnID, &msg)
+	}
 	return nil
 }
 
@@ -313,7 +333,9 @@ func (h *connHandler) handleInspectCaptureResult(line []byte) error {
 		h.logger.Warn("failed to parse inspect_capture_result", "peer", h.peer, "err", err)
 		return nil
 	}
-	h.router.RouteInspectCaptureResult(&msg)
+	if h.isExt {
+		h.router.RouteInspectCaptureResultFrom(h.extConnID, &msg)
+	}
 	return nil
 }
 
